@@ -1,0 +1,81 @@
+# ============================================================
+#  Cấu hình môi trường mô phỏng cánh tay robot SO-101
+#  Chỉnh sửa file này để thay đổi vật thể, vị trí cánh tay,
+#  và vị trí các camera. Không cần sửa code.
+# ============================================================
+
+# ---- Cánh tay robot ----------------------------------------
+arm:
+  # Vị trí đặt đế cánh tay (mét) và hướng xoay (độ) quanh trục x,y,z
+  base_pos: [0.0, 0.0, 0.0]
+  base_euler_deg: [0.0, 0.0, 0.0]
+
+  # Tư thế ban đầu (home) - giá trị mục tiêu cho từng khớp (radian)
+  # gripper: ~1.0 = mở, ~ -0.1 = đóng
+  home_pose:
+    shoulder_pan: 0.0
+    shoulder_lift: -0.8
+    elbow_flex: 1.2
+    wrist_flex: 0.9
+    wrist_roll: 0.0
+    gripper: 1.0
+
+# ---- Bàn / mặt phẳng đặt vật (tuỳ chọn) --------------------
+table:
+  enabled: false          # true để thêm một mặt bàn
+  size: [0.25, 0.25, 0.01]  # nửa kích thước hộp (x, y, z) mét
+  pos: [0.18, 0.0, 0.0]
+  rgba: [0.55, 0.4, 0.25, 1.0]
+
+# ---- Các vật thể cần gắp -----------------------------------
+# shape: box | cylinder | sphere
+#   box      -> size = [nửa_x, nửa_y, nửa_z]
+#   cylinder -> size = [bán_kính, nửa_chiều_cao]
+#   sphere   -> size = [bán_kính]
+# pos: vị trí ban đầu (m). z nên = nửa chiều cao để vật nằm trên sàn.
+# mass: khối lượng (kg). Nhẹ (~0.02) để gripper nhỏ gắp được.
+objects:
+  - name: cube_red
+    shape: box
+    size: [0.018, 0.018, 0.018]
+    pos: [0.17, 0.05, 0.02]
+    rgba: [0.9, 0.2, 0.2, 1.0]
+    mass: 0.02
+  - name: cyl_green
+    shape: cylinder
+    size: [0.016, 0.022]
+    pos: [0.19, -0.04, 0.022]
+    rgba: [0.2, 0.8, 0.35, 1.0]
+    mass: 0.02
+  - name: cube_blue
+    shape: box
+    size: [0.016, 0.016, 0.016]
+    pos: [0.13, -0.07, 0.018]
+    rgba: [0.2, 0.45, 0.95, 1.0]
+    mass: 0.018
+
+# ---- Camera 1: gắn trên cánh tay (cổ tay/gripper) ----------
+# Quan sát kẹp gắp so với vật. Gắn cứng vào thân "gripper".
+wrist_camera:
+  back: 0.08    # lùi camera ra sau điểm gắp (m)
+  up: 0.06      # nâng camera lên (m)
+  fovy: 70      # góc nhìn dọc (độ)
+
+# ---- Camera 2: gắn trên giá đỡ (có thể chỉnh vị trí) -------
+# Quan sát toàn bộ cánh tay so với vật.
+stand_camera:
+  pos: [0.45, 0.40, 0.40]   # vị trí giá đỡ camera (m) - CHỈNH ĐƯỢC
+  look_at: [0.15, 0.0, 0.06] # điểm camera hướng tới (m)
+  fovy: 55
+
+# ---- Góc nhìn người điều khiển (camera tự do) --------------
+operator_camera:
+  azimuth: 135      # độ
+  elevation: -25    # độ
+  distance: 0.9     # m
+  look_at: [0.12, 0.0, 0.12]
+
+# ---- Cửa sổ hiển thị ---------------------------------------
+window:
+  width: 1280
+  height: 800

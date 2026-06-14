@@ -1,0 +1,170 @@
+"""Dựng cảnh mô phỏng từ file cấu hình bằng MuJoCo MjSpec.
+
+Model robot SO-101 gốc (models/so101/scene.xml) được giữ NGUYÊN, không
+chỉnh sửa. Mọi thứ thuộc "môi trường trò chơi" (vật thể, camera, bàn, vị
+trí đế) được thêm vào động dựa trên config.
+"""
+from __future__ import annotations
+
+from pathlib import Path
+import math
+import numpy as np
+import mujoco
+
+# Thư mục gốc của dự án
+ROOT = Path(__file__).resolve().parent.parent
+BASE_SCENE = ROOT / "models" / "so101" / "scene.xml"
+
+# Tên 6 khớp/cơ cấu chấp hành của SO-101 (theo đúng model gốc)
+JOINT_NAMES = [
+    "shoulder_pan",
+    "shoulder_lift",
+    "elbow_flex",
+    "wrist_flex",
+    "wrist_roll",
+    "gripper",
+]
+
+# Điểm gắp (đầu kẹp) trong hệ toạ độ cục bộ của thân "gripper".
+# Lấy từ site "gripperframe" trong model gốc so101_new_calib.xml.
+GRASP_POINT_LOCAL = np.array([-0.0079, -0.0002, -0.0981])
+
+_SHAPE_MAP = {
+    "box": mujoco.mjtGeom.mjGEOM_BOX,
+    "cylinder": mujoco.mjtGeom.mjGEOM_CYLINDER,
+    "sphere": mujoco.mjtGeom.mjGEOM_SPHERE,
+}
+
+
+def _euler_deg_to_quat(euler_deg):
+    """Chuyển góc Euler (độ, thứ tự xyz) -> quaternion (w,x,y,z)."""
+    r = np.radians(euler_deg)
+    quat = np.zeros(4)
+    seq = "xyz"
+    mujoco.mju_euler2Quat(quat, r, seq)
+    return quat
+
+
+def _look_at_quat(cam_pos, target, up=(0.0, 0.0, 1.0)):
+    """Quaternion để camera tại cam_pos nhìn về điểm target.
+
+    Quy ước camera MuJoCo: trục -Z hướng nhìn, +Y hướng lên.
+    """
+    cam_pos = np.asarray(cam_pos, float)
+    target = np.asarray(target, float)
+    up = np.asarray(up, float)
+    forward = target - cam_pos
+    n = np.linalg.norm(forward)
+    if n < 1e-9:
+        forward = np.array([1.0, 0.0, 0.0])
+    else:
+        forward /= n
+    z_axis = -forward
+    x_axis = np.cross(up, z_axis)
+    if np.linalg.norm(x_axis) < 1e-6:
+        x_axis = np.array([1.0, 0.0, 0.0])
+    x_axis /= np.linalg.norm(x_axis)
+    y_axis = np.cross(z_axis, x_axis)
+    mat = np.column_stack([x_axis, y_axis, z_axis]).flatten()
+    quat = np.zeros(4)
+    mujoco.mju_mat2Quat(quat, mat)
+    return quat
+
+
+def build_spec(config: dict) -> mujoco.MjSpec:
+    """Tạo MjSpec hoàn chỉnh từ cấu hình."""
+    spec = mujoco.MjSpec.from_file(str(BASE_SCENE))
+
+    _place_arm(spec, config.get("arm", {}))
+    _add_wrist_camera(spec, config.get("wrist_camera", {}))
+    _add_stand_camera(spec, config.get("stand_camera", {}))
+    _add_table(spec, config.get("table", {}))
+    _add_objects(spec, config.get("objects", []))
+
+    return spec
+
+
+def _place_arm(spec, arm_cfg):
+    base = spec.body("base")
+    base.pos = list(arm_cfg.get("base_pos", [0.0, 0.0, 0.0]))
+    base.quat = list(_euler_deg_to_quat(arm_cfg.get("base_euler_deg", [0, 0, 0])))
+
+
+def _add_wrist_camera(spec, cam_cfg):
+    """Camera 1 - gắn cứng vào thân gripper, nhìn vào vùng kẹp gắp."""
+    back = float(cam_cfg.get("back", 0.08))
+    up = float(cam_cfg.get("up", 0.06))
+    fovy = float(cam_cfg.get("fovy", 70))
+
+    # Vị trí mount trong hệ cục bộ gripper: lùi theo -y, nâng theo +z
+    cam_pos = GRASP_POINT_LOCAL + np.array([0.0, -back, up])
+    quat = _look_at_quat(cam_pos, GRASP_POINT_LOCAL)
+
+    grip = spec.body("gripper")
+    cam = grip.add_camera()
+    cam.name = "wrist_cam"
+    cam.pos = list(cam_pos)
+    cam.quat = list(quat)
+    cam.fovy = fovy
+
+
+def _add_stand_camera(spec, cam_cfg):
+    """Camera 2 - đặt trên giá đỡ tại vị trí cố định trong thế giới."""
+    pos = cam_cfg.get("pos", [0.45, 0.40, 0.40])
+    look_at = cam_cfg.get("look_at", [0.15, 0.0, 0.06])
+    fovy = float(cam_cfg.get("fovy", 55))
+
+    cam = spec.worldbody.add_camera()
+    cam.name = "stand_cam"
+    cam.pos = list(pos)
+    cam.quat = list(_look_at_quat(pos, look_at))
+    cam.fovy = fovy
+
+
+def _add_table(spec, table_cfg):
+    if not table_cfg.get("enabled", False):
+        return
+    body = spec.worldbody.add_body()
+    body.name = "table"
+    body.pos = list(table_cfg.get("pos", [0.18, 0.0, 0.0]))
+    geom = body.add_geom()
+    geom.type = mujoco.mjtGeom.mjGEOM_BOX
+    geom.size = list(table_cfg.get("size", [0.25, 0.25, 0.01]))
+    geom.rgba = list(table_cfg.get("rgba", [0.55, 0.4, 0.25, 1.0]))
+
+
+def _add_objects(spec, objects_cfg):
+    for i, obj in enumerate(objects_cfg):
+        name = obj.get("name", f"object_{i}")
+        shape = obj.get("shape", "box").lower()
+        if shape not in _SHAPE_MAP:
+            raise ValueError(f"Hình dạng không hỗ trợ: {shape} (object {name})")
+
+        body = spec.worldbody.add_body()
+        body.name = name
+        body.pos = list(obj.get("pos", [0.18, 0.0, 0.02]))
+
+        joint = body.add_freejoint()
+        joint.name = f"{name}_free"
+
+        geom = body.add_geom()
+        geom.name = f"{name}_geom"
+        geom.type = _SHAPE_MAP[shape]
+        geom.size = _normalize_size(shape, obj.get("size", [0.02, 0.02, 0.02]))
+        geom.rgba = list(obj.get("rgba", [0.8, 0.2, 0.2, 1.0]))
+        # Ma sát cao + khối lượng nhẹ để gripper nhỏ gắp được
+        geom.friction = [1.5, 0.05, 0.001]
+        geom.mass = float(obj.get("mass", 0.02))
+
+
+def _normalize_size(shape, size):
+    """MjSpec yêu cầu mảng size 3 phần tử."""
+    size = list(size)
+    if shape == "sphere":
+        return [size[0], 0.0, 0.0]
+    if shape == "cylinder":
+        return [size[0], size[1], 0.0]
+    # box
+    while len(size) < 3:
+        size.append(size[-1])
+    return size[:3]

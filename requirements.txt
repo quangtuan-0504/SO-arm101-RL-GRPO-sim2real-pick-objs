@@ -1,0 +1,4 @@
+mujoco>=3.9.0
+numpy>=2.0
+PyYAML>=6.0
+glfw>=2.7
