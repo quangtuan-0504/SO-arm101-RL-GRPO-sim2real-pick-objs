@@ -30,10 +30,13 @@ HELP_LINES = [
     "  Z / X : co tay xoay (wrist_roll)",
     "  O / C : mo / dong kep (gripper)",
     "  SPACE : mo-dong kep nhanh",
+    "  T     : nhap goc quay bang so",
+    "  TAB   : chon khop de nhap goc",
     "  H     : ve tu the home",
     "  BACKSPACE : reset vat the",
+    "  P     : chup man hinh cua so",
     "  ESC   : thoat",
-    "Chuot (khung Operator): keo=xoay, lan=zoom",
+    "Chuot (cua so Operator): keo=xoay, lan=zoom",
 ]
 
 
@@ -41,5 +44,18 @@ def apply_held_keys(window, sim, dt):
     """Đọc trạng thái phím đang giữ và cập nhật điều khiển khớp."""
     for key, (joint, sign) in HELD_KEYS.items():
         if glfw.get_key(window, key) == glfw.PRESS:
+            rate = GRIPPER_RATE if joint == "gripper" else JOINT_RATE
+            sim.nudge_ctrl(joint, sign * rate * dt)
+
+
+def apply_held_keys_any(windows, sim, dt):
+    """Như apply_held_keys nhưng kiểm tra nhiều cửa sổ.
+
+    Phím được coi là "đang giữ" nếu nó được nhấn ở BẤT KỲ cửa sổ nào đang
+    focus; mỗi khớp chỉ được cập nhật một lần để không tăng tốc gấp đôi.
+    """
+    for key, (joint, sign) in HELD_KEYS.items():
+        pressed = any(glfw.get_key(w, key) == glfw.PRESS for w in windows)
+        if pressed:
             rate = GRIPPER_RATE if joint == "gripper" else JOINT_RATE
             sim.nudge_ctrl(joint, sign * rate * dt)

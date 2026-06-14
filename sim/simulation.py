@@ -72,3 +72,15 @@ class Simulation:
 
     def get_ctrl(self, joint_name: str) -> float:
         return float(self.data.ctrl[self.act_ids[joint_name]])
+
+    def get_ctrl_range(self, joint_name: str):
+        """Trả về (lo, hi) giới hạn điều khiển của khớp (radian)."""
+        aid = self.act_ids[joint_name]
+        lo, hi = self.ctrl_range[aid]
+        return float(lo), float(hi)
+
+    def set_ctrl(self, joint_name: str, value: float):
+        """Đặt mục tiêu một khớp theo giá trị tuyệt đối, kẹp trong giới hạn."""
+        aid = self.act_ids[joint_name]
+        lo, hi = self.ctrl_range[aid]
+        self.data.ctrl[aid] = float(np.clip(value, lo, hi))

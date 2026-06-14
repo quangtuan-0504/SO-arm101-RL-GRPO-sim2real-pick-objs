@@ -27,7 +27,7 @@ def main():
     sim = Simulation(config)
     print(f"[SO-101] Model nạp xong: {sim.model.nu} actuator, "
           f"{sim.model.ncam} camera, {len(config.get('objects', []))} vật thể.")
-    print("[SO-101] Mở cửa sổ 3 khung nhìn. Nhấn ESC để thoát.")
+    print("[SO-101] Mo 3 cua so camera rieng. Nhan ESC de thoat.")
 
     app = ThreeViewApp(sim, config)
     app.run()

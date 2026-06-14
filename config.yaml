@@ -75,7 +75,9 @@ operator_camera:
   distance: 0.9     # m
   look_at: [0.12, 0.0, 0.12]
 
-# ---- Cửa sổ hiển thị ---------------------------------------
+# ---- Cửa sổ hiển thị (mỗi camera một cửa sổ riêng) ---------
 window:
-  width: 1280
-  height: 800
+  operator_width: 960    # cửa sổ Operator (camera tự do)
+  operator_height: 640
+  camera_width: 560      # cửa sổ Camera 1 và Camera 2
+  camera_height: 440

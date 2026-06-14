@@ -1,120 +1,131 @@
-"""Cửa sổ GLFW hiển thị đồng thời 3 khung nhìn:
-   - Operator  (camera tự do, xoay bằng chuột)  -- khung lớn phía trên
-   - Camera 1  (gắn trên cổ tay)                 -- dưới trái
-   - Camera 2  (gắn trên giá đỡ)                 -- dưới phải
-Đồng thời nhận điều khiển bàn phím cho cánh tay.
+"""Hiển thị mỗi camera trong MỘT cửa sổ GLFW riêng:
+   - Operator  (camera tự do, xoay/zoom bằng chuột)
+   - Camera 1  (gắn trên cổ tay - wrist_cam)
+   - Camera 2  (gắn trên giá đỡ - stand_cam)
+Mỗi cửa sổ có nút "Chup man hinh" (bấm chuột) và phím tắt P.
+Các cửa sổ chia sẻ chung một OpenGL context nên dùng chung MjrContext.
+Điều khiển bàn phím cho cánh tay hoạt động ở bất kỳ cửa sổ nào đang focus.
 """
 from __future__ import annotations
 
+import math
 import time
+from pathlib import Path
+
 import numpy as np
 import glfw
 import mujoco
 
 from . import controls
-from .scene_builder import JOINT_NAMES
+from .scene_builder import JOINT_NAMES, ROOT
+
+# Kích thước nút chụp màn hình (pixel framebuffer)
+BTN_W = 150
+BTN_H = 34
+BTN_MARGIN = 10
+
+# Kích thước hộp nhập góc quay (pixel framebuffer)
+INPUT_W = 380
+INPUT_H = 150
 
 
-class ThreeViewApp:
-    def __init__(self, sim, config: dict):
-        self.sim = sim
-        self.model = sim.model
-        self.data = sim.data
+class CameraWindow:
+    """Một cửa sổ GLFW gắn với một camera MuJoCo."""
 
-        wcfg = config.get("window", {})
-        self.win_w = int(wcfg.get("width", 1280))
-        self.win_h = int(wcfg.get("height", 800))
+    def __init__(self, app, title, cam, is_operator=False,
+                 width=640, height=480, share=None):
+        self.app = app
+        self.title = title
+        self.cam = cam
+        self.is_operator = is_operator
 
-        self._init_window()
-        self._init_mujoco_render(config)
-        self._init_input_state()
-
-    # ----------------------------------------------------------------
-    def _init_window(self):
-        if not glfw.init():
-            raise RuntimeError("Không khởi tạo được GLFW")
-        # Dùng context OpenGL legacy mặc định (phù hợp với renderer của MuJoCo)
-        self.window = glfw.create_window(
-            self.win_w, self.win_h, "SO-101 Pick & Place - 3 Views", None, None)
+        self.window = glfw.create_window(width, height, title, None, share)
         if not self.window:
-            glfw.terminate()
-            raise RuntimeError("Không tạo được cửa sổ GLFW")
-        glfw.make_context_current(self.window)
-        glfw.swap_interval(1)
+            raise RuntimeError(f"Không tạo được cửa sổ GLFW: {title}")
 
-    def _init_mujoco_render(self, config):
-        self.scene = mujoco.MjvScene(self.model, maxgeom=10000)
-        self.opt = mujoco.MjvOption()
-        self.context = mujoco.MjrContext(
-            self.model, mujoco.mjtFontScale.mjFONTSCALE_150)
-
-        # Camera người điều khiển (tự do)
-        op = config.get("operator_camera", {})
-        self.cam_operator = mujoco.MjvCamera()
-        self.cam_operator.type = mujoco.mjtCamera.mjCAMERA_FREE
-        self.cam_operator.azimuth = float(op.get("azimuth", 135))
-        self.cam_operator.elevation = float(op.get("elevation", -25))
-        self.cam_operator.distance = float(op.get("distance", 0.9))
-        self.cam_operator.lookat = np.array(op.get("look_at", [0.12, 0.0, 0.12]))
-
-        # Camera cố định 1 & 2
-        self.cam_wrist = self._fixed_camera("wrist_cam")
-        self.cam_stand = self._fixed_camera("stand_cam")
-
-    def _fixed_camera(self, name):
-        cam = mujoco.MjvCamera()
-        cam.type = mujoco.mjtCamera.mjCAMERA_FIXED
-        cam.fixedcamid = mujoco.mj_name2id(
-            self.model, mujoco.mjtObj.mjOBJ_CAMERA, name)
-        return cam
-
-    def _init_input_state(self):
+        # Trạng thái chuột (cho operator) + cờ chụp ảnh
         self.button_left = False
         self.button_right = False
         self.button_middle = False
         self.last_x = 0.0
         self.last_y = 0.0
+        self._want_shot = False
+        self._btn_rect = None  # MjrRect của nút, cập nhật mỗi khung
 
         glfw.set_key_callback(self.window, self._on_key)
+        glfw.set_char_callback(self.window, self._on_char)
         glfw.set_mouse_button_callback(self.window, self._on_mouse_button)
         glfw.set_cursor_pos_callback(self.window, self._on_cursor)
         glfw.set_scroll_callback(self.window, self._on_scroll)
 
-    # ----------------------------------------------------------------
-    #  Bố cục các khung nhìn (toạ độ pixel framebuffer, gốc dưới-trái)
-    # ----------------------------------------------------------------
-    def _layout(self, fb_w, fb_h):
-        op_h = int(fb_h * 0.6)
-        cam_h = fb_h - op_h
-        half = fb_w // 2
-        operator = mujoco.MjrRect(0, cam_h, fb_w, op_h)
-        cam1 = mujoco.MjrRect(0, 0, half, cam_h)
-        cam2 = mujoco.MjrRect(half, 0, fb_w - half, cam_h)
-        return operator, cam1, cam2
+    # ------------------------------------------------------------------
+    #  Vị trí nút chụp màn hình (góc trên-phải, toạ độ framebuffer)
+    # ------------------------------------------------------------------
+    def _button_rect(self, fb_w, fb_h):
+        x = fb_w - BTN_W - BTN_MARGIN
+        y = fb_h - BTN_H - BTN_MARGIN
+        return mujoco.MjrRect(x, y, BTN_W, BTN_H)
 
-    def _cursor_in_operator(self, x, y):
-        """x,y theo toạ độ cửa sổ (gốc trên-trái). Operator = 60% phía trên."""
+    def _cursor_on_button(self, cx, cy):
+        """cx,cy: toạ độ chuột trong cửa sổ (gốc trên-trái)."""
+        if self._btn_rect is None:
+            return False
         win_w, win_h = glfw.get_window_size(self.window)
-        return y < win_h * 0.6
+        fb_w, fb_h = glfw.get_framebuffer_size(self.window)
+        if win_w == 0 or win_h == 0:
+            return False
+        sx, sy = fb_w / win_w, fb_h / win_h
+        fx = cx * sx
+        fy = fb_h - cy * sy  # đổi sang gốc dưới-trái như framebuffer
+        r = self._btn_rect
+        return (r.left <= fx <= r.left + r.width and
+                r.bottom <= fy <= r.bottom + r.height)
 
-    # ----------------------------------------------------------------
+    # ------------------------------------------------------------------
     #  Callbacks
-    # ----------------------------------------------------------------
+    # ------------------------------------------------------------------
     def _on_key(self, window, key, scancode, action, mods):
         if action != glfw.PRESS and action != glfw.REPEAT:
             return
+
+        app = self.app
+
+        # Khi đang ở chế độ nhập góc, các phím được dùng để soạn thảo số.
+        if app.input_active:
+            if key == glfw.KEY_ESCAPE:
+                app.input_cancel()
+            elif key in (glfw.KEY_ENTER, glfw.KEY_KP_ENTER):
+                app.input_apply()
+            elif key == glfw.KEY_BACKSPACE:
+                app.input_backspace()
+            elif key == glfw.KEY_TAB:
+                app.input_cycle_joint(-1 if mods & glfw.MOD_SHIFT else +1)
+            elif key == glfw.KEY_T:
+                app.input_toggle()
+            return
+
         if key == glfw.KEY_ESCAPE:
             glfw.set_window_should_close(window, True)
+        elif key == glfw.KEY_T and action == glfw.PRESS:
+            app.input_toggle()
+        elif key == glfw.KEY_TAB:
+            app.input_cycle_joint(-1 if mods & glfw.MOD_SHIFT else +1)
+        elif key == glfw.KEY_P and action == glfw.PRESS:
+            self._want_shot = True
         elif key == glfw.KEY_H:
-            self.sim.reset_arm()
+            self.app.sim.reset_arm()
         elif key == glfw.KEY_BACKSPACE:
-            self.sim.reset()
+            self.app.sim.reset()
         elif key == glfw.KEY_SPACE and action == glfw.PRESS:
-            # mở/đóng kẹp nhanh
-            aid = self.sim.act_ids["gripper"]
-            lo, hi = self.sim.ctrl_range[aid]
-            cur = self.data.ctrl[aid]
-            self.data.ctrl[aid] = lo if cur > (lo + hi) / 2 else hi
+            sim = self.app.sim
+            aid = sim.act_ids["gripper"]
+            lo, hi = sim.ctrl_range[aid]
+            cur = sim.data.ctrl[aid]
+            sim.data.ctrl[aid] = lo if cur > (lo + hi) / 2 else hi
+
+    def _on_char(self, window, codepoint):
+        """Nhận ký tự khi soạn góc quay (chỉ giữ số, dấu chấm, dấu trừ)."""
+        self.app.input_char(chr(codepoint))
 
     def _on_mouse_button(self, window, button, action, mods):
         self.button_left = glfw.get_mouse_button(
@@ -125,80 +136,326 @@ class ThreeViewApp:
             window, glfw.MOUSE_BUTTON_MIDDLE) == glfw.PRESS
         self.last_x, self.last_y = glfw.get_cursor_pos(window)
 
+        # Bấm trái vào nút -> yêu cầu chụp màn hình
+        if (button == glfw.MOUSE_BUTTON_LEFT and action == glfw.PRESS
+                and self._cursor_on_button(self.last_x, self.last_y)):
+            self._want_shot = True
+
     def _on_cursor(self, window, xpos, ypos):
         dx = xpos - self.last_x
         dy = ypos - self.last_y
         self.last_x, self.last_y = xpos, ypos
 
+        if not self.is_operator:
+            return  # camera cố định, không xoay
         if not (self.button_left or self.button_right or self.button_middle):
-            return
-        if not self._cursor_in_operator(xpos, ypos):
             return
 
         _, win_h = glfw.get_window_size(window)
+        if win_h == 0:
+            return
         if self.button_left:
-            action = mujoco.mjtMouse.mjMOUSE_ROTATE_V
+            act = mujoco.mjtMouse.mjMOUSE_ROTATE_V
         elif self.button_right:
-            action = mujoco.mjtMouse.mjMOUSE_MOVE_V
+            act = mujoco.mjtMouse.mjMOUSE_MOVE_V
         else:
-            action = mujoco.mjtMouse.mjMOUSE_ZOOM
+            act = mujoco.mjtMouse.mjMOUSE_ZOOM
         mujoco.mjv_moveCamera(
-            self.model, action, dx / win_h, dy / win_h,
-            self.scene, self.cam_operator)
+            self.app.model, act, dx / win_h, dy / win_h,
+            self.app.scene, self.cam)
 
     def _on_scroll(self, window, xoffset, yoffset):
-        x, y = glfw.get_cursor_pos(window)
-        if not self._cursor_in_operator(x, y):
+        if not self.is_operator:
             return
         mujoco.mjv_moveCamera(
-            self.model, mujoco.mjtMouse.mjMOUSE_ZOOM, 0.0, -0.05 * yoffset,
-            self.scene, self.cam_operator)
+            self.app.model, mujoco.mjtMouse.mjMOUSE_ZOOM,
+            0.0, -0.05 * yoffset, self.app.scene, self.cam)
 
-    # ----------------------------------------------------------------
-    #  Vẽ một khung nhìn
-    # ----------------------------------------------------------------
-    def _render_view(self, cam, viewport, title):
+    # ------------------------------------------------------------------
+    #  Vẽ cửa sổ
+    # ------------------------------------------------------------------
+    def render(self):
+        glfw.make_context_current(self.window)
+        fb_w, fb_h = glfw.get_framebuffer_size(self.window)
+        if fb_w == 0 or fb_h == 0:
+            return
+        viewport = mujoco.MjrRect(0, 0, fb_w, fb_h)
+
+        app = self.app
         mujoco.mjv_updateScene(
-            self.model, self.data, self.opt, None, cam,
-            mujoco.mjtCatBit.mjCAT_ALL, self.scene)
-        mujoco.mjr_render(viewport, self.scene, self.context)
-        mujoco.mjr_overlay(
-            mujoco.mjtFont.mjFONT_NORMAL,
-            mujoco.mjtGridPos.mjGRID_TOPLEFT,
-            viewport, title, "", self.context)
+            app.model, app.data, app.opt, None, self.cam,
+            mujoco.mjtCatBit.mjCAT_ALL, app.scene)
+        mujoco.mjr_render(viewport, app.scene, app.context)
 
-    def _render_help(self, viewport):
+        # Tiêu đề + (với operator) phần trợ giúp
+        mujoco.mjr_overlay(
+            mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT,
+            viewport, self.title, "", app.context)
+        if self.is_operator:
+            app.render_help(viewport)
+
+        # Chụp màn hình NỘI DUNG (trước khi vẽ nút) nếu được yêu cầu
+        if self._want_shot:
+            self._want_shot = False
+            app.capture(self, fb_w, fb_h)
+
+        # Vẽ nút chụp màn hình
+        self._btn_rect = self._button_rect(fb_w, fb_h)
+        mujoco.mjr_rectangle(self._btn_rect, 0.15, 0.15, 0.18, 0.85)
+        mujoco.mjr_overlay(
+            mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT,
+            self._btn_rect, " Chup man hinh (P)", "", app.context)
+
+        glfw.swap_buffers(self.window)
+
+
+class ThreeViewApp:
+    def __init__(self, sim, config: dict):
+        self.sim = sim
+        self.model = sim.model
+        self.data = sim.data
+        self.config = config
+
+        self.shot_dir = ROOT / "screenshots"
+        self.shot_dir.mkdir(exist_ok=True)
+
+        # Trạng thái hộp nhập góc quay (điều khiển bằng bàn phím)
+        self.input_active = False
+        self.input_buffer = ""
+        self.sel_joint = 0  # chỉ số khớp đang chọn trong JOINT_NAMES
+
+        self._init_glfw()
+        self._init_cameras(config)
+        self._init_render()
+        self._init_windows(config)
+
+    # ------------------------------------------------------------------
+    def _init_glfw(self):
+        if not glfw.init():
+            raise RuntimeError("Không khởi tạo được GLFW")
+
+    def _init_cameras(self, config):
+        op = config.get("operator_camera", {})
+        self.cam_operator = mujoco.MjvCamera()
+        self.cam_operator.type = mujoco.mjtCamera.mjCAMERA_FREE
+        self.cam_operator.azimuth = float(op.get("azimuth", 135))
+        self.cam_operator.elevation = float(op.get("elevation", -25))
+        self.cam_operator.distance = float(op.get("distance", 0.9))
+        self.cam_operator.lookat = np.array(op.get("look_at", [0.12, 0.0, 0.12]))
+
+        self.cam_wrist = self._fixed_camera("wrist_cam")
+        self.cam_stand = self._fixed_camera("stand_cam")
+
+    def _fixed_camera(self, name):
+        cam = mujoco.MjvCamera()
+        cam.type = mujoco.mjtCamera.mjCAMERA_FIXED
+        cam.fixedcamid = mujoco.mj_name2id(
+            self.model, mujoco.mjtObj.mjOBJ_CAMERA, name)
+        return cam
+
+    def _init_windows(self, config):
+        wcfg = config.get("window", {})
+        ow = int(wcfg.get("operator_width", wcfg.get("width", 960)))
+        oh = int(wcfg.get("operator_height", 640))
+        cw = int(wcfg.get("camera_width", 560))
+        ch = int(wcfg.get("camera_height", 440))
+
+        # Cửa sổ đầu tiên (operator) là chủ context được chia sẻ
+        self.operator_win = CameraWindow(
+            self, "OPERATOR (nguoi dieu khien)", self.cam_operator,
+            is_operator=True, width=ow, height=oh, share=None)
+
+        share = self.operator_win.window
+        self.windows = [
+            self.operator_win,
+            CameraWindow(self, "CAMERA 1 - Co tay (Wrist)", self.cam_wrist,
+                         width=cw, height=ch, share=share),
+            CameraWindow(self, "CAMERA 2 - Gia do (Stand)", self.cam_stand,
+                         width=cw, height=ch, share=share),
+        ]
+
+    def _init_render(self):
+        # Scene/option dùng chung cho mọi cửa sổ. MjrContext được tạo sau
+        # (trong _build_context) khi cửa sổ chủ đã sẵn sàng để chia sẻ context.
+        self.scene = mujoco.MjvScene(self.model, maxgeom=10000)
+        self.opt = mujoco.MjvOption()
+        self.context = None
+
+    def _build_context(self):
+        glfw.make_context_current(self.operator_win.window)
+        glfw.swap_interval(1)
+        self.context = mujoco.MjrContext(
+            self.model, mujoco.mjtFontScale.mjFONTSCALE_150)
+
+    # ------------------------------------------------------------------
+    #  Hộp nhập góc quay (điều khiển bằng bàn phím)
+    # ------------------------------------------------------------------
+    def input_toggle(self):
+        self.input_active = not self.input_active
+        self.input_buffer = ""
+
+    def input_cancel(self):
+        self.input_active = False
+        self.input_buffer = ""
+
+    def input_cycle_joint(self, step):
+        self.sel_joint = (self.sel_joint + step) % len(JOINT_NAMES)
+
+    def input_char(self, ch):
+        """Chỉ chấp nhận ký tự số khi đang ở chế độ nhập."""
+        if not self.input_active:
+            return
+        if ch.isdigit():
+            self.input_buffer += ch
+        elif ch == "." and "." not in self.input_buffer:
+            self.input_buffer += ch
+        elif ch == "-" and self.input_buffer == "":
+            self.input_buffer += ch
+
+    def input_backspace(self):
+        self.input_buffer = self.input_buffer[:-1]
+
+    def input_apply(self):
+        """Áp dụng góc (độ) đã nhập cho khớp đang chọn."""
+        name = JOINT_NAMES[self.sel_joint]
+        try:
+            deg = float(self.input_buffer)
+        except ValueError:
+            self.input_buffer = ""
+            return
+        self.sim.set_ctrl(name, math.radians(deg))
+        self.input_buffer = ""
+
+    # ------------------------------------------------------------------
+    def render_help(self, viewport):
         text = "\n".join(controls.HELP_LINES)
         mujoco.mjr_overlay(
-            mujoco.mjtFont.mjFONT_NORMAL,
-            mujoco.mjtGridPos.mjGRID_BOTTOMLEFT,
+            mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_BOTTOMLEFT,
             viewport, text, "", self.context)
-        # giá trị mục tiêu các khớp
-        vals = "\n".join(f"{n}: {self.sim.get_ctrl(n):+.2f}" for n in JOINT_NAMES)
-        mujoco.mjr_overlay(
-            mujoco.mjtFont.mjFONT_NORMAL,
-            mujoco.mjtGridPos.mjGRID_BOTTOMRIGHT,
-            viewport, "MUC TIEU KHOP\n" + vals, "", self.context)
 
-    # ----------------------------------------------------------------
+        # Mục tiêu khớp + khoảng giá trị cho phép (hiển thị theo độ)
+        lines = []
+        for i, n in enumerate(JOINT_NAMES):
+            lo, hi = self.sim.get_ctrl_range(n)
+            cur = self.sim.get_ctrl(n)
+            marker = ">" if i == self.sel_joint else " "
+            lines.append(
+                f"{marker}{n:<13}: {math.degrees(cur):+7.1f}  "
+                f"[{math.degrees(lo):+6.0f} .. {math.degrees(hi):+6.0f}]")
+        vals = "\n".join(lines)
+        mujoco.mjr_overlay(
+            mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_BOTTOMRIGHT,
+            viewport, "MUC TIEU KHOP / KHOANG (do)\n" + vals, "", self.context)
+
+        self._render_input_box(viewport)
+
+    def _render_input_box(self, viewport):
+        """Vẽ hộp nhập góc quay ở phía trên cửa sổ operator."""
+        name = JOINT_NAMES[self.sel_joint]
+        lo, hi = self.sim.get_ctrl_range(name)
+        cur = math.degrees(self.sim.get_ctrl(name))
+        lo_d, hi_d = math.degrees(lo), math.degrees(hi)
+
+        if self.input_active:
+            hint = "go so + ENTER de ap dung, ESC de huy"
+            typed = self.input_buffer + "_"
+        else:
+            hint = "Nhan T de bat dau nhap"
+            typed = self.input_buffer
+
+        lines = [
+            f"NHAP GOC QUAY  ({hint})",
+            f"Khop  : {name}   (TAB doi khop)",
+            f"Khoang: {lo_d:+.0f} .. {hi_d:+.0f} do",
+            f"Hien tai: {cur:+.1f} do",
+            f"Nhap  : {typed} do",
+        ]
+        text = "\n".join(lines)
+
+        x = max(BTN_MARGIN, (viewport.width - INPUT_W) // 2)
+        y = viewport.height - INPUT_H - BTN_MARGIN
+        rect = mujoco.MjrRect(x, y, INPUT_W, INPUT_H)
+        if self.input_active:
+            mujoco.mjr_rectangle(rect, 0.10, 0.28, 0.12, 0.88)
+        else:
+            mujoco.mjr_rectangle(rect, 0.15, 0.15, 0.18, 0.80)
+        mujoco.mjr_overlay(
+            mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT,
+            rect, text, "", self.context)
+
+    def capture(self, win: CameraWindow, fb_w, fb_h):
+        """Đọc pixel khung hiện tại và lưu thành PNG."""
+        rgb = np.empty((fb_h, fb_w, 3), dtype=np.uint8)
+        viewport = mujoco.MjrRect(0, 0, fb_w, fb_h)
+        mujoco.mjr_readPixels(rgb, None, viewport, self.context)
+        rgb = np.flipud(rgb)  # OpenGL gốc dưới-trái -> ảnh gốc trên-trái
+
+        slug = _slugify(win.title)
+        stamp = time.strftime("%Y%m%d_%H%M%S")
+        path = self.shot_dir / f"{slug}_{stamp}.png"
+        _save_png(path, rgb)
+        print(f"[SO-101] Da chup man hinh: {path}")
+
+    # ------------------------------------------------------------------
     def run(self):
+        self._build_context()
+
         dt = self.sim.dt
         steps_per_frame = max(1, round((1.0 / 60.0) / dt))
+        windows = [w.window for w in self.windows]
         try:
-            while not glfw.window_should_close(self.window):
-                controls.apply_held_keys(self.window, self.sim, steps_per_frame * dt)
+            while not glfw.window_should_close(self.operator_win.window):
+                if not self.input_active:
+                    controls.apply_held_keys_any(windows, self.sim,
+                                                 steps_per_frame * dt)
                 self.sim.step(steps_per_frame)
 
-                fb_w, fb_h = glfw.get_framebuffer_size(self.window)
-                op_rect, c1_rect, c2_rect = self._layout(fb_w, fb_h)
+                for w in self.windows:
+                    if not glfw.window_should_close(w.window):
+                        w.render()
 
-                self._render_view(self.cam_operator, op_rect, "OPERATOR (nguoi dieu khien)")
-                self._render_help(op_rect)
-                self._render_view(self.cam_wrist, c1_rect, "CAMERA 1 - Co tay (Wrist)")
-                self._render_view(self.cam_stand, c2_rect, "CAMERA 2 - Gia do (Stand)")
-
-                glfw.swap_buffers(self.window)
                 glfw.poll_events()
         finally:
-            self.context.free()
+            if self.context is not None:
+                self.context.free()
             glfw.terminate()
+
+
+# ----------------------------------------------------------------------
+#  Tiện ích
+# ----------------------------------------------------------------------
+def _slugify(text):
+    keep = []
+    for ch in text.lower():
+        if ch.isalnum():
+            keep.append(ch)
+        elif ch in " -_":
+            keep.append("_")
+    slug = "".join(keep).strip("_")
+    while "__" in slug:
+        slug = slug.replace("__", "_")
+    return slug or "view"
+
+
+def _save_png(path: Path, rgb: np.ndarray):
+    try:
+        from PIL import Image
+        Image.fromarray(rgb).save(path)
+    except ImportError:
+        import struct, zlib
+        h, w, _ = rgb.shape
+        raw = bytearray()
+        for y in range(h):
+            raw.append(0)
+            raw.extend(rgb[y].tobytes())
+
+        def chunk(typ, data):
+            c = typ + data
+            return struct.pack(">I", len(data)) + c + struct.pack(
+                ">I", zlib.crc32(c) & 0xffffffff)
+
+        png = b"\x89PNG\r\n\x1a\n"
+        png += chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0))
+        png += chunk(b"IDAT", zlib.compress(bytes(raw), 9))
+        png += chunk(b"IEND", b"")
+        Path(path).write_bytes(png)

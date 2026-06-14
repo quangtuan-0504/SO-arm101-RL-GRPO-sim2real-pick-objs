@@ -1,8 +1,8 @@
 # Mô phỏng cánh tay robot SO-101 — Gắp vật thể
 
 Ứng dụng mô phỏng cánh tay robot **SO-101** (SO-ARM101) bằng [MuJoCo],
-cho phép điều khiển cánh tay gắp các vật thể, với **3 khung nhìn** hiển thị
-đồng thời và **môi trường trò chơi cấu hình được** qua một file YAML.
+cho phép điều khiển cánh tay gắp các vật thể, với **mỗi camera hiển thị trong
+một cửa sổ riêng** và **môi trường trò chơi cấu hình được** qua một file YAML.
 
 Chạy native trên **Mac Mini (Apple Silicon)**, không cần GPU rời.
 
@@ -10,10 +10,12 @@ Chạy native trên **Mac Mini (Apple Silicon)**, không cần GPU rời.
 
 - Dùng đúng model robot SO-101 đã tải về (`models/so101/`), **không thiết kế lại**.
 - Điều khiển 6 khớp + kẹp gắp bằng bàn phím (chuyển động liên tục khi giữ phím).
-- 3 khung nhìn trong 1 cửa sổ:
-  - **Operator** — góc nhìn người điều khiển, xoay/zoom bằng chuột (khung lớn phía trên).
+- 3 cửa sổ độc lập, mỗi cửa sổ một camera (di chuyển/sắp xếp tự do):
+  - **Operator** — góc nhìn người điều khiển, xoay/zoom bằng chuột.
   - **Camera 1 (Wrist)** — gắn cứng trên cổ tay, quan sát kẹp gắp so với vật.
   - **Camera 2 (Stand)** — gắn trên giá đỡ, quan sát toàn bộ cánh tay; **vị trí chỉnh được**.
+- Mỗi cửa sổ có **nút "Chup man hinh"** (bấm chuột) và phím tắt `P`; ảnh PNG lưu
+  vào thư mục `screenshots/`.
 - Môi trường cấu hình hoàn toàn qua `config.yaml`: vật thể (hình dạng/kích thước/vị trí/
   số lượng/màu/khối lượng), vị trí đặt cánh tay, vị trí 2 camera, góc nhìn người điều khiển.
 
@@ -52,8 +54,10 @@ Dùng file cấu hình khác:
 | `SPACE` | mở–đóng kẹp nhanh |
 | `H` | về tư thế home |
 | `BACKSPACE` | reset toàn bộ (cánh tay + vật thể) |
+| `P` | chụp màn hình cửa sổ đang dùng (lưu vào `screenshots/`) |
 | `ESC` | thoát |
-| Chuột (trong khung Operator) | kéo = xoay, chuột phải kéo = di chuyển, lăn = zoom |
+| Chuột (trong cửa sổ Operator) | kéo = xoay, chuột phải kéo = di chuyển, lăn = zoom |
+| Bấm nút "Chup man hinh" (mỗi cửa sổ) | lưu ảnh PNG của cửa sổ đó |
 
 ## Cấu hình môi trường (`config.yaml`)
 
@@ -69,7 +73,8 @@ Mọi thiết lập "môi trường trò chơi" nằm trong `config.yaml`, khôn
 - `wrist_camera` — camera 1: khoảng lùi `back`, nâng `up`, góc nhìn `fovy`.
 - `stand_camera` — camera 2: `pos` (vị trí giá đỡ, **chỉnh được**), `look_at`, `fovy`.
 - `operator_camera` — góc nhìn ban đầu của người điều khiển.
-- `window` — kích thước cửa sổ.
+- `window` — kích thước các cửa sổ: `operator_width/height` cho cửa sổ Operator,
+  `camera_width/height` cho hai cửa sổ Camera 1 & 2.
 
 Ví dụ thêm một vật hình cầu:
 
@@ -104,7 +109,7 @@ robot_arm_sim_v2/
     ├── scene_builder.py   # dựng cảnh động từ config (MjSpec)
     ├── simulation.py      # lõi mô phỏng (MjModel/MjData, home, reset)
     ├── controls.py        # ánh xạ bàn phím
-    └── viewer3.py         # cửa sổ GLFW 3 khung nhìn
+    └── viewer3.py         # mỗi camera một cửa sổ GLFW + nút chụp màn hình
 ```
 
 ## Ghi chú kỹ thuật
