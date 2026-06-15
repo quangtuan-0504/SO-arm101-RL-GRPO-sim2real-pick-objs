@@ -40,3 +40,40 @@ Chi tiết thay đổi:
 - `sim/viewer3.py`: thêm char callback, xử lý phím cho chế độ nhập, các hàm `input_*`, hộp nhập `_render_input_box`, hiển thị khoảng giá trị, và tạm dừng điều khiển giữ phím khi đang gõ số để cánh tay không bị di chuyển ngoài ý muốn.
 
 Vì đây là giao diện overlay của MuJoCo/GLFW (không có widget thật), "text box" được làm bằng cách bắt phím và vẽ overlay. Bạn chạy thử bằng `python app.py` để kiểm tra trực quan nhé.
+----------------------------------------------
+Tôi muốn nhập tất cả các giá trị góc một lần sau đó bấm hoạt động thì cánh tay mới quay theo chỉ định
+-----------------------------
+The user wants to type targets for all joints first, then press an "activate" button/key so the arm moves to all specified angles at once. Let me redesign the input box to hold a pending target per joint plus an "Hoạt động" button.
+
+Let me view the current state of the relevant sections:
+
+Now let me refactor. First, generalize the cursor hit-test and add an activate button rect to `CameraWindow`:
+
+Now handle a click on the activate button in `_on_mouse_button`:
+
+Now update the key handling. ENTER should confirm the current field and move on, and a new key (G) activates all:
+
+Now update the app state. Replace the simple buffer state with a per-joint pending list:
+
+Now rewrite the input methods and the rendering to support the pending-all-then-activate workflow:
+
+Update the input box dimensions and wire the activate button into the operator render:
+
+Now update the help text in controls.py to reflect the new workflow:
+
+Đã đổi luồng hoạt động đúng như bạn muốn: nhập sẵn góc cho tất cả khớp trước, rồi bấm **Hoạt động** thì cánh tay mới quay.
+
+Cách dùng mới:
+- Nhấn **T** để mở bảng nhập. Bảng sẽ hiện sẵn 6 khớp với góc hiện tại (theo độ) và khoảng cho phép `[min..max]`.
+- **TAB** (hoặc **ENTER**) chuyển sang khớp kế tiếp; Shift+TAB lùi lại. Khớp đang chọn có dấu `>` và con trỏ `_`.
+- Gõ số cho từng khớp (hỗ trợ `-` và `.`), **Backspace** để xóa. Giá trị được giữ lại cho mỗi khớp, không áp dụng ngay.
+- Khi đã nhập xong tất cả, bấm nút **>> HOAT DONG <<** (màu xanh, ngay dưới bảng nhập) hoặc nhấn **G**. Lúc này cánh tay mới quay tới toàn bộ góc đã chỉ định cùng lúc.
+- **ESC** để hủy/đóng bảng nhập.
+
+Các giá trị được kẹp tự động trong giới hạn của từng khớp, và nhập theo độ (chuyển sang radian khi áp dụng).
+
+Thay đổi chính:
+- `viewer3.py`: thay buffer đơn lẻ bằng `pending_deg` (mảng góc mục tiêu cho từng khớp); thêm `input_confirm_field`, `input_activate`, nút "Hoạt động" có thể bấm chuột (`render_activate_button`) và phím tắt G; bảng nhập giờ liệt kê cả 6 khớp cùng khoảng giá trị.
+- `controls.py`: cập nhật phần trợ giúp thêm phím G.
+
+Đây là overlay MuJoCo/GLFW nên mình chưa chạy thử trực quan được; bạn chạy `python app.py` để kiểm tra giao diện và thao tác nhé.

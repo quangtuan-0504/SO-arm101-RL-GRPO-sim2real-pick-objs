@@ -75,6 +75,7 @@ def build_spec(config: dict) -> mujoco.MjSpec:
     """Tạo MjSpec hoàn chỉnh từ cấu hình."""
     spec = mujoco.MjSpec.from_file(str(BASE_SCENE))
 
+    _configure_physics(spec)
     _place_arm(spec, config.get("arm", {}))
     _add_wrist_camera(spec, config.get("wrist_camera", {}))
     _add_stand_camera(spec, config.get("stand_camera", {}))
@@ -82,6 +83,26 @@ def build_spec(config: dict) -> mujoco.MjSpec:
     _add_objects(spec, config.get("objects", []))
 
     return spec
+
+
+def _configure_physics(spec):
+    """Tinh chỉnh solver tiếp xúc để kẹp gắp giữ chặt vật, không bị trượt.
+
+    Đây là phần quan trọng nhất để khắc phục hiện tượng vật tuột khỏi kẹp:
+    - impratio cao: làm ma sát "cứng" hơn nhiều, vật không trượt khi bị ép.
+    - cone elliptic: mô hình nón ma sát chính xác hơn cho việc kẹp.
+    - integrator implicitfast: ổn định hơn Euler khi có tiếp xúc giữ lâu.
+    - tăng số vòng lặp solver để tiếp xúc hội tụ chắc chắn.
+    """
+    opt = spec.option
+    opt.integrator = mujoco.mjtIntegrator.mjINT_IMPLICITFAST
+    opt.cone = mujoco.mjtCone.mjCONE_ELLIPTIC
+    # Tỉ lệ trở kháng pháp tuyến/tiếp tuyến: càng cao càng ít trượt khi kẹp.
+    opt.impratio = 50.0
+    opt.iterations = 150
+    opt.ls_iterations = 50
+    # Ngưỡng hội tụ chặt hơn cho ràng buộc tiếp xúc.
+    opt.tolerance = 1e-10
 
 
 def _place_arm(spec, arm_cfg):
@@ -152,8 +173,16 @@ def _add_objects(spec, objects_cfg):
         geom.type = _SHAPE_MAP[shape]
         geom.size = _normalize_size(shape, obj.get("size", [0.02, 0.02, 0.02]))
         geom.rgba = list(obj.get("rgba", [0.8, 0.2, 0.2, 1.0]))
-        # Ma sát cao + khối lượng nhẹ để gripper nhỏ gắp được
-        geom.friction = [1.5, 0.05, 0.001]
+        # condim=6: bật ma sát trượt + xoắn + lăn để vật không xoay/lăn tuột
+        # khỏi kẹp. (Với condim=3 mặc định, hai thành phần xoắn/lăn bị bỏ qua.)
+        geom.condim = 6
+        # friction = [trượt, xoắn, lăn]. Ma sát trượt cao + xoắn/lăn vừa đủ
+        # để giữ chặt vật trong kẹp.
+        geom.friction = [2.0, 0.1, 0.005]
+        # solref/solimp: tiếp xúc cứng hơn, giảm độ lún để vật không bị "ép
+        # lọt" rồi bật ra khỏi kẹp. solimp gần 1 = ràng buộc rất cứng.
+        geom.solref = [0.005, 1.0]
+        geom.solimp = [0.95, 0.99, 0.001, 0.5, 2.0]
         geom.mass = float(obj.get("mass", 0.02))
 
 
