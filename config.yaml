@@ -17,7 +17,7 @@ arm:
     shoulder_lift: -0.8
     elbow_flex: 1.2
     wrist_flex: 0.9
-    wrist_roll: 0.0
+    wrist_roll: 1.57 # pi/2 radian , đơn vị là radian chứ không phải độ
     gripper: 1.0
 
 # ---- Bàn / mặt phẳng đặt vật (tuỳ chọn) --------------------
@@ -58,14 +58,16 @@ objects:
 # Quan sát kẹp gắp so với vật. Gắn cứng vào thân "gripper".
 wrist_camera:
   back: 0.08    # lùi camera ra sau điểm gắp (m)
-  up: 0.06      # nâng camera lên (m)
-  fovy: 70      # góc nhìn dọc (độ)
+  up: 0.07      # nâng camera lên (m)
+  fovy: 90      # góc nhìn dọc (độ)
 
 # ---- Camera 2: gắn trên giá đỡ (có thể chỉnh vị trí) -------
 # Quan sát toàn bộ cánh tay so với vật.
 stand_camera:
-  pos: [0.45, 0.40, 0.40]   # vị trí giá đỡ camera (m) - CHỈNH ĐƯỢC
-  look_at: [0.15, 0.0, 0.06] # điểm camera hướng tới (m)
+  # Nhìn theo phương ngang, từ trái (+y) qua phải (-y), trực diện cánh tay.
+  # pos và look_at cùng độ cao z => hướng nhìn song song mặt sàn.
+  pos: [0.10, 0.55, 0.12]    # camera đặt bên trái cánh tay (m) - CHỈNH ĐƯỢC
+  look_at: [0.10, 0.0, 0.12] # nhìn ngang vào tâm cánh tay (m)
   fovy: 55
 
 # ---- Góc nhìn người điều khiển (camera tự do) --------------
