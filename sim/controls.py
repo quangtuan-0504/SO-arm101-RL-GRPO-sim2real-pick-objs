@@ -32,6 +32,7 @@ HELP_LINES = [
     "  SPACE : mo-dong kep nhanh",
     "  T     : nhap goc quay bang so",
     "  TAB   : chon khop de nhap goc",
+    "  G     : HOAT DONG - quay tat ca khop",
     "  H     : ve tu the home",
     "  BACKSPACE : reset vat the",
     "  P     : chup man hinh cua so",

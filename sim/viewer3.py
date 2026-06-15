@@ -25,8 +25,8 @@ BTN_H = 34
 BTN_MARGIN = 10
 
 # Kích thước hộp nhập góc quay (pixel framebuffer)
-INPUT_W = 380
-INPUT_H = 150
+INPUT_W = 440
+INPUT_H = 200
 
 
 class CameraWindow:
@@ -50,7 +50,8 @@ class CameraWindow:
         self.last_x = 0.0
         self.last_y = 0.0
         self._want_shot = False
-        self._btn_rect = None  # MjrRect của nút, cập nhật mỗi khung
+        self._btn_rect = None  # MjrRect của nút chụp, cập nhật mỗi khung
+        self._activate_rect = None  # MjrRect nút "Hoat dong" (chỉ operator)
 
         glfw.set_key_callback(self.window, self._on_key)
         glfw.set_char_callback(self.window, self._on_char)
@@ -68,7 +69,11 @@ class CameraWindow:
 
     def _cursor_on_button(self, cx, cy):
         """cx,cy: toạ độ chuột trong cửa sổ (gốc trên-trái)."""
-        if self._btn_rect is None:
+        return self._cursor_on_rect(cx, cy, self._btn_rect)
+
+    def _cursor_on_rect(self, cx, cy, rect):
+        """Kiểm tra con trỏ có nằm trong rect (toạ độ framebuffer) không."""
+        if rect is None:
             return False
         win_w, win_h = glfw.get_window_size(self.window)
         fb_w, fb_h = glfw.get_framebuffer_size(self.window)
@@ -77,7 +82,7 @@ class CameraWindow:
         sx, sy = fb_w / win_w, fb_h / win_h
         fx = cx * sx
         fy = fb_h - cy * sy  # đổi sang gốc dưới-trái như framebuffer
-        r = self._btn_rect
+        r = rect
         return (r.left <= fx <= r.left + r.width and
                 r.bottom <= fy <= r.bottom + r.height)
 
@@ -95,11 +100,13 @@ class CameraWindow:
             if key == glfw.KEY_ESCAPE:
                 app.input_cancel()
             elif key in (glfw.KEY_ENTER, glfw.KEY_KP_ENTER):
-                app.input_apply()
+                app.input_confirm_field()
             elif key == glfw.KEY_BACKSPACE:
                 app.input_backspace()
             elif key == glfw.KEY_TAB:
                 app.input_cycle_joint(-1 if mods & glfw.MOD_SHIFT else +1)
+            elif key == glfw.KEY_G:
+                app.input_activate()
             elif key == glfw.KEY_T:
                 app.input_toggle()
             return
@@ -108,6 +115,8 @@ class CameraWindow:
             glfw.set_window_should_close(window, True)
         elif key == glfw.KEY_T and action == glfw.PRESS:
             app.input_toggle()
+        elif key == glfw.KEY_G and action == glfw.PRESS:
+            app.input_activate()
         elif key == glfw.KEY_TAB:
             app.input_cycle_joint(-1 if mods & glfw.MOD_SHIFT else +1)
         elif key == glfw.KEY_P and action == glfw.PRESS:
@@ -140,6 +149,12 @@ class CameraWindow:
         if (button == glfw.MOUSE_BUTTON_LEFT and action == glfw.PRESS
                 and self._cursor_on_button(self.last_x, self.last_y)):
             self._want_shot = True
+
+        # Bấm trái vào nút "Hoat dong" -> áp dụng tất cả góc đã nhập
+        if (button == glfw.MOUSE_BUTTON_LEFT and action == glfw.PRESS
+                and self._cursor_on_rect(self.last_x, self.last_y,
+                                         self._activate_rect)):
+            self.app.input_activate()
 
     def _on_cursor(self, window, xpos, ypos):
         dx = xpos - self.last_x
@@ -193,6 +208,7 @@ class CameraWindow:
             viewport, self.title, "", app.context)
         if self.is_operator:
             app.render_help(viewport)
+            app.render_activate_button(self, viewport)
 
         # Chụp màn hình NỘI DUNG (trước khi vẽ nút) nếu được yêu cầu
         if self._want_shot:
@@ -221,8 +237,11 @@ class ThreeViewApp:
 
         # Trạng thái hộp nhập góc quay (điều khiển bằng bàn phím)
         self.input_active = False
-        self.input_buffer = ""
-        self.sel_joint = 0  # chỉ số khớp đang chọn trong JOINT_NAMES
+        self.input_buffer = ""        # chuỗi đang gõ cho khớp đang chọn
+        self.sel_joint = 0            # chỉ số khớp đang chọn trong JOINT_NAMES
+        # Góc mục tiêu (độ) cho từng khớp, nhập sẵn rồi mới "Hoat dong"
+        self.pending_deg = [0.0] * len(JOINT_NAMES)
+        self.input_status = ""        # thông báo ngắn hiển thị trong hộp nhập
 
         self._init_glfw()
         self._init_cameras(config)
@@ -288,18 +307,44 @@ class ThreeViewApp:
             self.model, mujoco.mjtFontScale.mjFONTSCALE_150)
 
     # ------------------------------------------------------------------
-    #  Hộp nhập góc quay (điều khiển bằng bàn phím)
+    #  Hộp nhập góc quay: nhập sẵn cho mọi khớp, rồi bấm "Hoat dong"
     # ------------------------------------------------------------------
     def input_toggle(self):
         self.input_active = not self.input_active
-        self.input_buffer = ""
+        if self.input_active:
+            # Khởi tạo bằng góc hiện tại để chỉ cần sửa khớp muốn đổi
+            self.pending_deg = [math.degrees(self.sim.get_ctrl(n))
+                                for n in JOINT_NAMES]
+            self.input_buffer = self._fmt(self.pending_deg[self.sel_joint])
+            self.input_status = "Nhap goc cho tung khop roi bam HOAT DONG"
+        else:
+            self.input_buffer = ""
+            self.input_status = ""
 
     def input_cancel(self):
         self.input_active = False
         self.input_buffer = ""
+        self.input_status = ""
+
+    def _commit_buffer(self):
+        """Lưu chuỗi đang gõ vào pending của khớp đang chọn (nếu hợp lệ)."""
+        if self.input_buffer not in ("", "-", "."):
+            try:
+                self.pending_deg[self.sel_joint] = float(self.input_buffer)
+            except ValueError:
+                pass
+        # Đồng bộ lại ô nhập với giá trị pending đã chuẩn hoá
+        self.input_buffer = self._fmt(self.pending_deg[self.sel_joint])
+
+    def input_confirm_field(self):
+        """ENTER: chốt khớp hiện tại rồi chuyển sang khớp kế tiếp."""
+        self._commit_buffer()
+        self.input_cycle_joint(+1)
 
     def input_cycle_joint(self, step):
+        self._commit_buffer()
         self.sel_joint = (self.sel_joint + step) % len(JOINT_NAMES)
+        self.input_buffer = self._fmt(self.pending_deg[self.sel_joint])
 
     def input_char(self, ch):
         """Chỉ chấp nhận ký tự số khi đang ở chế độ nhập."""
@@ -315,16 +360,18 @@ class ThreeViewApp:
     def input_backspace(self):
         self.input_buffer = self.input_buffer[:-1]
 
-    def input_apply(self):
-        """Áp dụng góc (độ) đã nhập cho khớp đang chọn."""
-        name = JOINT_NAMES[self.sel_joint]
-        try:
-            deg = float(self.input_buffer)
-        except ValueError:
-            self.input_buffer = ""
+    def input_activate(self):
+        """Áp dụng tất cả góc đã nhập cho cánh tay cùng lúc."""
+        if not self.input_active:
             return
-        self.sim.set_ctrl(name, math.radians(deg))
-        self.input_buffer = ""
+        self._commit_buffer()
+        for i, name in enumerate(JOINT_NAMES):
+            self.sim.set_ctrl(name, math.radians(self.pending_deg[i]))
+        self.input_status = "Da ap dung goc cho tat ca khop!"
+
+    @staticmethod
+    def _fmt(deg):
+        return f"{deg:.1f}"
 
     # ------------------------------------------------------------------
     def render_help(self, viewport):
@@ -338,7 +385,7 @@ class ThreeViewApp:
         for i, n in enumerate(JOINT_NAMES):
             lo, hi = self.sim.get_ctrl_range(n)
             cur = self.sim.get_ctrl(n)
-            marker = ">" if i == self.sel_joint else " "
+            marker = ">" if (self.input_active and i == self.sel_joint) else " "
             lines.append(
                 f"{marker}{n:<13}: {math.degrees(cur):+7.1f}  "
                 f"[{math.degrees(lo):+6.0f} .. {math.degrees(hi):+6.0f}]")
@@ -350,38 +397,53 @@ class ThreeViewApp:
         self._render_input_box(viewport)
 
     def _render_input_box(self, viewport):
-        """Vẽ hộp nhập góc quay ở phía trên cửa sổ operator."""
-        name = JOINT_NAMES[self.sel_joint]
-        lo, hi = self.sim.get_ctrl_range(name)
-        cur = math.degrees(self.sim.get_ctrl(name))
-        lo_d, hi_d = math.degrees(lo), math.degrees(hi)
-
-        if self.input_active:
-            hint = "go so + ENTER de ap dung, ESC de huy"
-            typed = self.input_buffer + "_"
+        """Vẽ hộp nhập góc quay (tất cả khớp) ở phía trên cửa sổ operator."""
+        if not self.input_active:
+            hint = "Nhan T de nhap goc quay cho cac khop"
+            lines = [hint]
+            box_h = 34
         else:
-            hint = "Nhan T de bat dau nhap"
-            typed = self.input_buffer
+            lines = ["NHAP GOC QUAY (do) - TAB/ENTER doi khop, ESC huy"]
+            for i, n in enumerate(JOINT_NAMES):
+                lo, hi = self.sim.get_ctrl_range(n)
+                if i == self.sel_joint:
+                    field = self.input_buffer + "_"
+                    marker = ">"
+                else:
+                    field = self._fmt(self.pending_deg[i])
+                    marker = " "
+                lines.append(
+                    f"{marker}{n:<13}: {field:<8} "
+                    f"[{math.degrees(lo):+.0f}..{math.degrees(hi):+.0f}]")
+            if self.input_status:
+                lines.append(self.input_status)
+            box_h = INPUT_H
 
-        lines = [
-            f"NHAP GOC QUAY  ({hint})",
-            f"Khop  : {name}   (TAB doi khop)",
-            f"Khoang: {lo_d:+.0f} .. {hi_d:+.0f} do",
-            f"Hien tai: {cur:+.1f} do",
-            f"Nhap  : {typed} do",
-        ]
         text = "\n".join(lines)
-
         x = max(BTN_MARGIN, (viewport.width - INPUT_W) // 2)
-        y = viewport.height - INPUT_H - BTN_MARGIN
-        rect = mujoco.MjrRect(x, y, INPUT_W, INPUT_H)
+        y = viewport.height - box_h - BTN_MARGIN
+        rect = mujoco.MjrRect(x, y, INPUT_W, box_h)
         if self.input_active:
-            mujoco.mjr_rectangle(rect, 0.10, 0.28, 0.12, 0.88)
+            mujoco.mjr_rectangle(rect, 0.10, 0.20, 0.30, 0.88)
         else:
             mujoco.mjr_rectangle(rect, 0.15, 0.15, 0.18, 0.80)
         mujoco.mjr_overlay(
             mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT,
             rect, text, "", self.context)
+
+    def render_activate_button(self, win, viewport):
+        """Vẽ nút 'Hoat dong' dưới hộp nhập; trả về rect đã vẽ (hoặc None)."""
+        if not self.input_active:
+            win._activate_rect = None
+            return
+        x = max(BTN_MARGIN, (viewport.width - INPUT_W) // 2)
+        y = viewport.height - INPUT_H - BTN_MARGIN - BTN_H - 6
+        rect = mujoco.MjrRect(x, y, INPUT_W, BTN_H)
+        mujoco.mjr_rectangle(rect, 0.12, 0.45, 0.15, 0.95)
+        mujoco.mjr_overlay(
+            mujoco.mjtFont.mjFONT_NORMAL, mujoco.mjtGridPos.mjGRID_TOPLEFT,
+            rect, " >> HOAT DONG (G) - quay tat ca khop <<", "", self.context)
+        win._activate_rect = rect
 
     def capture(self, win: CameraWindow, fb_w, fb_h):
         """Đọc pixel khung hiện tại và lưu thành PNG."""
