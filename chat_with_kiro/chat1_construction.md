@@ -1,24 +1,25 @@
+# Clean State
+
+Exported: 6/16/2026, 1:01:48 PM
+
+---
+
+**User:**
+
 Tôi muốn xây dựng một ứng dụng mô phỏng cánh tay robot SO-101 Arms để gắp vật thể với các yêu cầu sau:
-
 Tôi có thể điều khiển cánh tay để gắp vật thể
-
 Chưa cần mô phỏng vật lý quá tốt nhưng tôi muốn mô hình robot SO-101 Arms phải được mô phỏng tốt như mô hình mẫu đã được tải về không tự thiết kế lại model robot
-
 Một số thiết lập môi trường trò chơi cơ bản cho người điều khiển: 
-
 Thiết lập các vật cần gắp: hình dạng (tròn, vuông), kích thước, vị trí ban đầu, số lượng, ...
-
-	Thiết lập vị trí ban đầu để đặt cánh tay
-
-	Thiết lập vị trí camera
-
+Thiết lập vị trí ban đầu để đặt cánh tay
+Thiết lập vị trí camera
 Đối với camera (có vai trò như mắt của cánh tay), camera 1 được gắn trên cánh tay để quan sát kẹp gắp so với các vật cần gắp, camera 2 được gắn trên giá đỡ để quan sát toàn bộ cánh tay so với các vật cần gắp. Camera 2 có thể được điều chỉnh vị trí đặt.
-
 Tôi muốn hiển thị 3 góc nhìn, góc nhìn của người điều khiển quan sát, góc nhìn của camera 1, góc nhìn của camera 2.
-
 Tôi đang sử dụng thiết bị MAC Mini để chạy chương trình
 
-------------------------------------------------------------
+---
+
+**Assistant:**
 
 Tôi sẽ giúp bạn xây dựng ứng dụng mô phỏng cánh tay robot SO-101. Trước tiên hãy để tôi kiểm tra môi trường hiện tại và lập kế hoạch.
 
@@ -115,3 +116,5 @@ Hoặc kiểm thử nhanh không cần màn hình: `./.venv/bin/python smoke_tes
 **Phím điều khiển** (xem góc dưới khung Operator): `A/D` `W/S` `Q/E` `R/F` `Z/X` cho 5 khớp, `O/C` mở/đóng kẹp, `SPACE` đóng-mở nhanh, `H` về home, `BACKSPACE` reset, `ESC` thoát.
 
 Một điểm cần lưu ý: SO-101 là cánh tay nhỏ (tầm với ~0.2–0.25m), nên các vật trong config được đặt trong bán kính đó quanh đế. Khi bạn thêm vật mới, giữ `pos` trong tầm với và `z = nửa chiều cao` để vật nằm trên sàn. Bạn muốn tôi tinh chỉnh thêm góc camera giá đỡ cho cận cảnh hơn, hay thêm tính năng nào khác không?
+
+---

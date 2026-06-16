@@ -1,5 +1,17 @@
+# Khi tôi gắp trúng vật thể thì kẹp gắp không thể...
+
+Exported: 6/16/2026, 1:04:11 PM
+
+---
+
+**User:**
+
 Khi tôi gắp trúng vật thể thì kẹp gắp không thể giữ chặt vật thể 
----------------------------------------------------------------------
+
+---
+
+**Assistant:**
+
 Tôi sẽ xem qua code để hiểu cách kẹp gắp và mô phỏng vật lý đang hoạt động.
 
 Tôi đã hiểu rõ vấn đề. Đây là vấn đề kinh điển khi mô phỏng kẹp gắp trong MuJoCo. Để tôi giải thích nguyên nhân rồi sửa.
@@ -43,3 +55,5 @@ Mô phỏng ổn định, không có giá trị vô cực, vận tốc trong ng�
 Bạn chạy lại `run.sh` và thử kẹp lại. Nếu vẫn còn hơi trượt với hình trụ, tăng `impratio` lên 100 trong `_configure_physics`. Còn nếu mô phỏng giật/rung khi kẹp, giảm `impratio` xuống ~20 và giảm `solimp[0]` xuống 0.9.
 
 Lưu ý: lực kẹp vốn đã dư (actuator ±3.35 N·m, đủ giữ vật ~0.02 kg), nên vấn đề thực sự là mô hình ma sát chứ không phải lực — vì vậy tôi không đụng tới actuator hay khối lượng.
+
+---

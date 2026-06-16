@@ -1,6 +1,16 @@
+# Tôi muốn thêm text box để nhập góc quay trong b...
+
+Exported: 6/16/2026, 1:03:30 PM
+
+---
+
+**User:**
+
 Tôi muốn thêm text box để nhập góc quay trong bảng điều khiển, hiển thị thêm khoảng giá trị
 
---------------------------------------------------
+---
+
+**Assistant:**
 
 Now I understand the architecture. This is a MuJoCo + GLFW app where the "control panel" is the overlay text on the operator window, and there's no widget toolkit. I'll add a keyboard-driven angle text box and show each joint's value range in degrees.
 
@@ -40,9 +50,17 @@ Chi tiết thay đổi:
 - `sim/viewer3.py`: thêm char callback, xử lý phím cho chế độ nhập, các hàm `input_*`, hộp nhập `_render_input_box`, hiển thị khoảng giá trị, và tạm dừng điều khiển giữ phím khi đang gõ số để cánh tay không bị di chuyển ngoài ý muốn.
 
 Vì đây là giao diện overlay của MuJoCo/GLFW (không có widget thật), "text box" được làm bằng cách bắt phím và vẽ overlay. Bạn chạy thử bằng `python app.py` để kiểm tra trực quan nhé.
-----------------------------------------------
+
+---
+
+**User:**
+
 Tôi muốn nhập tất cả các giá trị góc một lần sau đó bấm hoạt động thì cánh tay mới quay theo chỉ định
------------------------------
+
+---
+
+**Assistant:**
+
 The user wants to type targets for all joints first, then press an "activate" button/key so the arm moves to all specified angles at once. Let me redesign the input box to hold a pending target per joint plus an "Hoạt động" button.
 
 Let me view the current state of the relevant sections:
@@ -77,3 +95,5 @@ Thay đổi chính:
 - `controls.py`: cập nhật phần trợ giúp thêm phím G.
 
 Đây là overlay MuJoCo/GLFW nên mình chưa chạy thử trực quan được; bạn chạy `python app.py` để kiểm tra giao diện và thao tác nhé.
+
+---

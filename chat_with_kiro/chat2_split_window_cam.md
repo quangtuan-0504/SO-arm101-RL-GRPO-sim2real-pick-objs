@@ -1,5 +1,17 @@
+# Tôi muốn tách góc nhìn của mỗi camera ra thành ...
+
+Exported: 6/16/2026, 1:02:46 PM
+
+---
+
+**User:**
+
 Tôi muốn tách góc nhìn của mỗi camera ra thành một cửa sổ hiển thị riêng và trang bị thêm nút chụp màn hình cho cửa số đó
--------------------------------------------------------
+
+---
+
+**Assistant:**
+
 Để tôi xem qua codebase trước khi thực hiện thay đổi.
 
 Tôi đã hiểu kiến trúc. Hiện tại `ThreeViewApp` dùng một cửa sổ GLFW duy nhất chia 3 viewport. Tôi sẽ tách thành các cửa sổ riêng (chia sẻ context OpenGL), mỗi cửa sổ render một camera và có nút "Chụp màn hình" có thể bấm bằng chuột (kèm phím tắt P).
@@ -40,3 +52,5 @@ Thay đổi chính:
 Đã xác minh: cú pháp, import (glfw/mujoco), nạp config qua smoke_test, và logic lưu PNG/slugify đều chạy tốt. Phần GUI nhiều cửa sổ cần màn hình thật để chạy nên không test headless được ở đây, nhưng kiến trúc theo đúng mẫu shared-context chuẩn của MuJoCo+GLFW.
 
 Chạy thử: `./.venv/bin/python app.py` — bạn sẽ thấy 3 cửa sổ tách rời, mỗi cửa sổ có nút chụp ở góc phải trên.
+
+---

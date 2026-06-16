@@ -1,8 +1,18 @@
- tôi muốn chỉnh góc nhìn của stand_camera thành nhìn theo phương ngang, hướng từ trái qua phải, trực diện vào cánh tay
+# tôi muốn chỉnh góc nhìn của stand_camera thành ...
 
- ------------------------------------------
+Exported: 6/16/2026, 1:04:51 PM
 
- Tôi đã xem cách `stand_camera` hoạt động. Hệ toạ độ: đế cánh tay ở gốc `[0,0,0]`, cánh tay vươn về phía `+x`, trục `y` là phương ngang trái–phải, `z` là chiều cao.
+---
+
+**User:**
+
+tôi muốn chỉnh góc nhìn của stand_camera thành nhìn theo phương ngang, hướng từ trái qua phải, trực diện vào cánh tay
+
+---
+
+**Assistant:**
+
+Tôi đã xem cách `stand_camera` hoạt động. Hệ toạ độ: đế cánh tay ở gốc `[0,0,0]`, cánh tay vươn về phía `+x`, trục `y` là phương ngang trái–phải, `z` là chiều cao.
 
 Để camera nhìn **theo phương ngang** (cùng độ cao với điểm nhìn), **từ trái qua phải** (đặt ở phía `+y` nhìn về `-y`), và **trực diện vào cánh tay**, tôi chỉnh `pos` và `look_at` cùng độ cao `z`:
 
@@ -15,3 +25,5 @@ Vài tham số dễ tinh chỉnh nếu cần:
 - Muốn camera xa/gần hơn: tăng/giảm giá trị `y` trong `pos` (ví dụ `0.7` để lùi ra xa).
 - Muốn ngắm cao/thấp hơn nhưng vẫn ngang: đổi `z` ở **cả hai** dòng `pos` và `look_at` cho bằng nhau.
 - Nếu muốn nhìn từ phải qua trái thay vì trái qua phải, đặt `y` của `pos` thành số âm (ví dụ `-0.55`).
+
+---

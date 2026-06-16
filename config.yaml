@@ -18,7 +18,7 @@ arm:
     elbow_flex: 1.2
     wrist_flex: 0.9
     wrist_roll: 1.57 # pi/2 radian , đơn vị là radian chứ không phải độ
-    gripper: 1.0
+    gripper: 1.2
 
 # ---- Bàn / mặt phẳng đặt vật (tuỳ chọn) --------------------
 table:
