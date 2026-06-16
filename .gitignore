@@ -3,3 +3,4 @@ __pycache__/
 *.pyc
 smoke_output.png
 screenshots/
+vlm_runs/
