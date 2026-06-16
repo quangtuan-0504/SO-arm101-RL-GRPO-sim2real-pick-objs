@@ -80,6 +80,7 @@ def build_spec(config: dict) -> mujoco.MjSpec:
     _add_wrist_camera(spec, config.get("wrist_camera", {}))
     _add_stand_camera(spec, config.get("stand_camera", {}))
     _add_table(spec, config.get("table", {}))
+    _add_basket(spec, config.get("basket", {}))
     _add_objects(spec, config.get("objects", []))
 
     return spec
@@ -152,6 +153,51 @@ def _add_table(spec, table_cfg):
     geom.type = mujoco.mjtGeom.mjGEOM_BOX
     geom.size = list(table_cfg.get("size", [0.25, 0.25, 0.01]))
     geom.rgba = list(table_cfg.get("rgba", [0.55, 0.4, 0.25, 1.0]))
+
+
+def _add_basket(spec, basket_cfg):
+    """Thêm một cái giỏ tĩnh để robot thả vật vào.
+
+    Giỏ được dựng từ các hộp (box): 1 đáy + 4 thành. Đây là một thân tĩnh
+    (không có freejoint) nên giỏ đứng yên tại vị trí cấu hình. Lòng giỏ rỗng
+    để vật rơi vào và được giữ lại bởi 4 thành.
+    """
+    if not basket_cfg.get("enabled", False):
+        return
+
+    pos = list(basket_cfg.get("pos", [0.0, 0.20, 0.0]))
+    # inner = nửa kích thước lòng giỏ (x, y) và chiều cao thành (z)
+    inner = list(basket_cfg.get("inner_size", [0.06, 0.06, 0.05]))
+    wall = float(basket_cfg.get("wall_thickness", 0.005))
+    floor_t = float(basket_cfg.get("floor_thickness", 0.005))
+    rgba = list(basket_cfg.get("rgba", [0.6, 0.45, 0.2, 1.0]))
+
+    ix, iy, h = inner[0], inner[1], inner[2]
+
+    body = spec.worldbody.add_body()
+    body.name = "basket"
+    body.pos = pos
+
+    def _add_wall(name, size, wpos):
+        g = body.add_geom()
+        g.name = f"basket_{name}"
+        g.type = mujoco.mjtGeom.mjGEOM_BOX
+        g.size = list(size)
+        g.pos = list(wpos)
+        g.rgba = rgba
+        g.condim = 3
+
+    # Đáy giỏ: nằm sát mặt sàn, tâm ở độ cao floor_t
+    _add_wall("floor", [ix + wall, iy + wall, floor_t], [0.0, 0.0, floor_t])
+
+    # 4 thành: cao h, đặt phía trên đáy
+    wall_zc = floor_t + h  # tâm thành theo z
+    # Thành theo trục +x và -x (vuông góc trục x)
+    _add_wall("wall_xp", [wall, iy + wall, h], [ix + wall, 0.0, wall_zc])
+    _add_wall("wall_xn", [wall, iy + wall, h], [-(ix + wall), 0.0, wall_zc])
+    # Thành theo trục +y và -y (vuông góc trục y)
+    _add_wall("wall_yp", [ix + wall, wall, h], [0.0, iy + wall, wall_zc])
+    _add_wall("wall_yn", [ix + wall, wall, h], [0.0, -(iy + wall), wall_zc])
 
 
 def _add_objects(spec, objects_cfg):

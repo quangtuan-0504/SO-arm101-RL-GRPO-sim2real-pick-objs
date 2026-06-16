@@ -27,6 +27,16 @@ table:
   pos: [0.18, 0.0, 0.0]
   rgba: [0.55, 0.4, 0.25, 1.0]
 
+# ---- Giỏ đựng vật (tuỳ chọn) -------------------------------
+# Cái giỏ tĩnh để robot gắp vật rồi thả vào. Dựng từ đáy + 4 thành.
+basket:
+  enabled: true
+  pos: [0.12, -0.20, 0.0]         # vị trí giỏ (m) - trong tầm với, lệch sang +y, tách khỏi vật
+  inner_size: [0.05, 0.05, 0.04] # nửa lòng giỏ (x, y) và chiều cao thành (z)
+  wall_thickness: 0.005          # độ dày thành giỏ (m)
+  floor_thickness: 0.005         # độ dày đáy giỏ (m)
+  rgba: [0.6, 0.45, 0.2, 1.0]    # màu giỏ
+
 # ---- Các vật thể cần gắp -----------------------------------
 # shape: box | cylinder | sphere
 #   box      -> size = [nửa_x, nửa_y, nửa_z]
