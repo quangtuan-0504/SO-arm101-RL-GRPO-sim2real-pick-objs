@@ -459,7 +459,12 @@ class ThreeViewApp:
         print(f"[SO-101] Da chup man hinh: {path}")
 
     # ------------------------------------------------------------------
-    def run(self):
+    def run(self, on_frame=None):
+        """Vòng lặp GLFW chính.
+
+        ``on_frame``: callback tuỳ chọn ``fn(app)`` gọi mỗi khung sau khi bước
+        mô phỏng (dùng cho driver VLM chạy song song).
+        """
         self._build_context()
 
         dt = self.sim.dt
@@ -471,6 +476,9 @@ class ThreeViewApp:
                     controls.apply_held_keys_any(windows, self.sim,
                                                  steps_per_frame * dt)
                 self.sim.step(steps_per_frame)
+
+                if on_frame is not None:
+                    on_frame(self)
 
                 for w in self.windows:
                     if not glfw.window_should_close(w.window):
