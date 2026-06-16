@@ -1,18 +1,17 @@
-"""Client gọi Qwen-VL qua endpoint OpenAI-compatible (chỉ dùng stdlib).
+"""Client gọi Qwen-VL (qwen3.6-flash) qua OpenAI-compatible SDK của DashScope.
 
-Hỗ trợ DashScope compatible-mode hoặc bất kỳ server nào nói "chat/completions":
-    base_url = https://dashscope.aliyuncs.com/compatible-mode/v1
-    model    = qwen-vl-max-latest | qwen2.5-vl-72b-instruct | ...
+Dùng OpenAI Python SDK (Cách 1 trong tài liệu QwenCloud) vì qwen3.6-flash là
+model "deep thinking": cần ``enable_thinking=True`` kèm ``stream=True`` và trả
+``reasoning_content`` tách khỏi ``content``. SDK xử lý SSE streaming sẵn, ít
+lỗi hơn tự parse stream bằng tay.
 
-Ngoài ra có MockQwenClient để chạy thử vòng lặp end-to-end mà không cần mạng
-hoặc API key.
+Cài đặt:  pip install openai
+Endpoint mặc định: https://dashscope-intl.aliyuncs.com/compatible-mode/v1
 """
 from __future__ import annotations
 
 import json
 import re
-import urllib.request
-import urllib.error
 
 from sim.scene_builder import JOINT_NAMES
 
@@ -42,61 +41,86 @@ def parse_control_json(text: str) -> dict:
         elif cleaned[i] == "}":
             depth -= 1
             if depth == 0:
-                blob = cleaned[start:i + 1]
-                return json.loads(blob)
+                return json.loads(cleaned[start:i + 1])
     raise ValueError("JSON không cân bằng dấu ngoặc")
 
 
 class QwenVLClient:
-    """Gọi Qwen-VL qua HTTP (OpenAI-compatible /chat/completions)."""
+    """Gọi qwen3.6-flash qua OpenAI SDK (DashScope compatible-mode)."""
 
     def __init__(self, api_key: str, base_url: str,
-                 model: str = "qwen-vl-max-latest",
-                 temperature: float = 0.1, max_tokens: int = 1024,
-                 timeout: float = 90.0):
-        self.api_key = api_key
-        self.base_url = base_url.rstrip("/")
+                 model: str = "qwen3.6-flash",
+                 enable_thinking: bool = True,
+                 temperature: float = 0.1, max_tokens: int = 2048,
+                 timeout: float = 120.0, verbose: bool = False):
+        # Import tại đây để chỉ bắt buộc cài openai khi dùng client thật.
+        from openai import OpenAI
+
+        self.client = OpenAI(api_key=api_key, base_url=base_url, timeout=timeout)
         self.model = model
+        self.enable_thinking = enable_thinking
         self.temperature = temperature
         self.max_tokens = max_tokens
-        self.timeout = timeout
+        self.verbose = verbose
 
     def predict(self, messages: list) -> dict:
         """Gửi messages, trả về dict đã parse từ JSON model sinh ra."""
-        raw = self._raw_completion(messages)
-        return parse_control_json(raw)
+        return parse_control_json(self._complete(messages))
 
-    def _raw_completion(self, messages: list) -> str:
-        url = f"{self.base_url}/chat/completions"
-        payload = {
-            "model": self.model,
-            "messages": messages,
-            "temperature": self.temperature,
-            "max_tokens": self.max_tokens,
-        }
-        body = json.dumps(payload).encode("utf-8")
-        req = urllib.request.Request(
-            url, data=body, method="POST",
-            headers={
-                "Content-Type": "application/json",
-                "Authorization": f"Bearer {self.api_key}",
-            },
+    def _complete(self, messages: list) -> str:
+        """Trả về phần 'content' (đáp án) đã ghép từ stream."""
+        if self.enable_thinking:
+            return self._complete_stream(messages)
+        return self._complete_once(messages)
+
+    def _complete_once(self, messages: list) -> str:
+        """Gọi không streaming (khi tắt thinking)."""
+        completion = self.client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            temperature=self.temperature,
+            max_tokens=self.max_tokens,
+            extra_body={"enable_thinking": False},
         )
-        try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-        except urllib.error.HTTPError as e:
-            detail = e.read().decode("utf-8", "ignore")
-            raise RuntimeError(f"Qwen API lỗi {e.code}: {detail}") from e
-        return data["choices"][0]["message"]["content"]
+        return completion.choices[0].message.content or ""
+
+    def _complete_stream(self, messages: list) -> str:
+        """Gọi streaming với thinking; gom 'content', bỏ qua reasoning."""
+        completion = self.client.chat.completions.create(
+            model=self.model,
+            messages=messages,
+            temperature=self.temperature,
+            max_tokens=self.max_tokens,
+            extra_body={"enable_thinking": True},
+            stream=True,
+        )
+        content_parts: list[str] = []
+        answering = False
+        for chunk in completion:
+            if not chunk.choices:
+                continue
+            delta = chunk.choices[0].delta
+            reasoning = getattr(delta, "reasoning_content", None)
+            if self.verbose and reasoning:
+                print(reasoning, end="", flush=True)
+            if getattr(delta, "content", None):
+                if self.verbose and not answering:
+                    print("\n--- answer ---")
+                    answering = True
+                if self.verbose:
+                    print(delta.content, end="", flush=True)
+                content_parts.append(delta.content)
+        if self.verbose:
+            print()
+        return "".join(content_parts)
 
 
 class MockQwenClient:
     """Client giả lập: không gọi mạng, dùng để kiểm thử vòng lặp.
 
-    Sinh phản hồi đơn giản theo "kịch bản": tiến dần các khớp về home rồi
-    đóng kẹp, đánh dấu done sau ``done_after`` lần gọi. Mục đích chỉ để xác
-    nhận đường ống render -> parse -> set_ctrl -> step hoạt động.
+    Sinh phản hồi theo "kịch bản": giữ tư thế home rồi đóng kẹp và nâng lên,
+    đánh dấu done sau ``done_after`` lần gọi. Chỉ để xác nhận đường ống
+    render -> parse -> set_ctrl -> step hoạt động.
     """
 
     def __init__(self, sim, done_after: int = 3):
@@ -113,11 +137,11 @@ class MockQwenClient:
             phase, grip, done = "approach", "open", False
         elif self.calls == self.done_after:
             phase, grip, done = "grasp", "close", False
-            angles["gripper"] = -0.1  # đóng kẹp
+            angles["gripper"] = -0.1
         else:
             phase, grip, done = "lift", "hold", True
             angles["gripper"] = -0.1
-            angles["shoulder_lift"] = 0.2  # nâng lên
+            angles["shoulder_lift"] = 0.2
 
         return {
             "reasoning": f"[MOCK] lần gọi {self.calls}",

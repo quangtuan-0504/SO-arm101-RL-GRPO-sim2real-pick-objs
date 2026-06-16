@@ -11,10 +11,9 @@ Chu trình mỗi bước:
 Chạy thử KHÔNG cần API (mock):
     python -m vlm.control_loop --target cube_red --mock
 
-Chạy thật với Qwen-VL (DashScope compatible-mode):
-    export QWEN_API_KEY=sk-xxx
-    export QWEN_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
-    python -m vlm.control_loop --target cube_red --model qwen-vl-max-latest
+Chạy thật với Qwen-VL (qwen3.6-flash, DashScope compatible-mode):
+    # API key đọc từ .env (QWEN_API_KEY=...) hoặc biến môi trường
+    python -m vlm.control_loop --target cube_red
 """
 from __future__ import annotations
 
@@ -25,6 +24,24 @@ import time
 from pathlib import Path
 
 import yaml
+
+DEFAULT_BASE_URL = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+DEFAULT_MODEL = "qwen3.6-flash"
+
+
+def load_dotenv(path: Path):
+    """Nạp biến môi trường từ file .env (định dạng KEY=value), không cần lib."""
+    if not path.exists():
+        return
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, val = line.partition("=")
+        key = key.strip()
+        val = val.strip().strip('"').strip("'")
+        # Không ghi đè biến đã có sẵn trong môi trường
+        os.environ.setdefault(key, val)
 
 from sim.scene_builder import JOINT_NAMES, ROOT
 from sim.simulation import Simulation
@@ -115,15 +132,17 @@ def build_client(args, sim_for_mock):
         print("[VLM] Dung MockQwenClient (khong goi mang).")
         return MockQwenClient(sim_for_mock, done_after=args.mock_done_after)
 
-    api_key = args.api_key or os.environ.get("QWEN_API_KEY", "")
-    base_url = args.base_url or os.environ.get(
-        "QWEN_BASE_URL",
-        "https://dashscope.aliyuncs.com/compatible-mode/v1")
+    api_key = (args.api_key or os.environ.get("QWEN_API_KEY")
+               or os.environ.get("DASHSCOPE_API_KEY") or "")
+    base_url = args.base_url or os.environ.get("QWEN_BASE_URL", DEFAULT_BASE_URL)
     if not api_key:
-        sys.exit("Thieu API key. Dat QWEN_API_KEY hoac --api-key, "
-                 "hoac dung --mock de chay thu.")
-    print(f"[VLM] Goi Qwen-VL model={args.model} @ {base_url}")
-    return QwenVLClient(api_key=api_key, base_url=base_url, model=args.model)
+        sys.exit("Thieu API key. Dat QWEN_API_KEY trong .env / bien moi truong, "
+                 "hoac --api-key, hoac dung --mock de chay thu.")
+    print(f"[VLM] Goi {args.model} @ {base_url} "
+          f"(thinking={'on' if not args.no_thinking else 'off'})")
+    return QwenVLClient(api_key=api_key, base_url=base_url, model=args.model,
+                        enable_thinking=not args.no_thinking,
+                        verbose=args.verbose)
 
 
 def main():
@@ -133,15 +152,20 @@ def main():
                    help="Mo ta vat the can gap")
     p.add_argument("--max-steps", type=int, default=12)
     p.add_argument("--settle-seconds", type=float, default=0.6)
-    p.add_argument("--model", default="qwen-vl-max-latest")
+    p.add_argument("--model", default=DEFAULT_MODEL)
     p.add_argument("--api-key", default=None)
     p.add_argument("--base-url", default=None)
+    p.add_argument("--no-thinking", action="store_true",
+                   help="Tat che do deep-thinking (goi khong streaming)")
+    p.add_argument("--verbose", action="store_true",
+                   help="In qua trinh suy luan (reasoning) cua model")
     p.add_argument("--mock", action="store_true",
                    help="Chay thu khong goi mang (client gia lap)")
     p.add_argument("--mock-done-after", type=int, default=3)
     p.add_argument("--no-debug-img", action="store_true")
     args = p.parse_args()
 
+    load_dotenv(ROOT / ".env")
     config = load_config(args.config)
     # Sim tạm chỉ để mock biết home_pose/ctrlrange (run_loop tạo sim riêng).
     sim_tmp = Simulation(config)
@@ -157,3 +181,4 @@ def main():
 
 if __name__ == "__main__":
     raise SystemExit(main())
+# .venv/bin/python -m vlm.control_loop --target cube_red --max-steps 3 --no-thinking --verbose 
