@@ -118,8 +118,8 @@ class QwenVLClient:
 class MockQwenClient:
     """Client giả lập: không gọi mạng, dùng để kiểm thử vòng lặp.
 
-    Sinh phản hồi theo "kịch bản": giữ tư thế home rồi đóng kẹp và nâng lên,
-    đánh dấu done sau ``done_after`` lần gọi. Chỉ để xác nhận đường ống
+    Sinh phản hồi theo "kịch bản" đủ chu trình gắp-và-thả: tiếp cận -> kẹp ->
+    nâng -> mang sang giỏ -> thả, rồi đánh dấu done. Chỉ để xác nhận đường ống
     render -> parse -> set_ctrl -> step hoạt động.
     """
 
@@ -138,10 +138,19 @@ class MockQwenClient:
         elif self.calls == self.done_after:
             phase, grip, done = "grasp", "close", False
             angles["gripper"] = -0.1
-        else:
-            phase, grip, done = "lift", "hold", True
+        elif self.calls == self.done_after + 1:
+            phase, grip, done = "lift", "hold", False
             angles["gripper"] = -0.1
             angles["shoulder_lift"] = 0.2
+        elif self.calls == self.done_after + 2:
+            phase, grip, done = "carry", "hold", False
+            angles["gripper"] = -0.1
+            angles["shoulder_lift"] = 0.2
+            angles["shoulder_pan"] = -1.0
+        else:
+            phase, grip, done = "release", "open", True
+            angles["shoulder_lift"] = 0.2
+            angles["shoulder_pan"] = -1.0
 
         return {
             "reasoning": f"[MOCK] lần gọi {self.calls}",

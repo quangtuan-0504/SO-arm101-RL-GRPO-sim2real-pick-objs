@@ -72,8 +72,8 @@ def _output_schema_example(sim) -> str:
     home = sim.config.get("arm", {}).get("home_pose", {})
     angles = {n: round(float(home.get(n, 0.0)), 3) for n in JOINT_NAMES}
     example = {
-        "reasoning": "Mô tả ngắn gọn vị trí vật trong 2 ảnh và cách cánh tay "
-                     "cần di chuyển để tiếp cận và kẹp.",
+        "reasoning": "Mô tả ngắn gọn vị trí vật và giỏ trong 2 ảnh, đầu kẹp "
+                     "đang ở đâu so với chúng, và bước di chuyển kế tiếp.",
         "target_object": "cube_red",
         "phase": "approach",
         "gripper_action": "open",
@@ -90,8 +90,13 @@ def build_system_prompt() -> str:
         "Bạn là bộ điều khiển thị giác (vision-based controller) cho cánh tay "
         "robot 6 bậc tự do SO-101 trong môi trường mô phỏng MuJoCo. Nhiệm vụ "
         "của bạn là QUAN SÁT hai ảnh camera mô tả hiện trạng, rồi DỰ ĐOÁN góc "
-        "quay mục tiêu (radian) cho 6 khớp để cánh tay tiếp cận và GẮP đúng vật "
-        "thể được yêu cầu.",
+        "quay mục tiêu (radian) cho 6 khớp để cánh tay GẮP đúng vật thể được "
+        "yêu cầu rồi MANG VÀ THẢ vật đó VÀO GIỎ.",
+        "",
+        "Toàn bộ nhiệm vụ là một chu trình gắp-và-thả (pick-and-place):",
+        "tiếp cận vật -> căn chỉnh -> kẹp -> nâng lên -> di chuyển tới phía "
+        "trên giỏ -> mở kẹp thả vật vào giỏ. Chỉ báo done=true khi vật đã nằm "
+        "trong giỏ.",
         "",
         "Nguyên tắc bắt buộc:",
         "1. Chỉ suy luận dựa trên những gì NHÌN THẤY trong 2 ảnh, không bịa "
@@ -99,9 +104,12 @@ def build_system_prompt() -> str:
         "2. Mọi góc đầu ra phải là radian và NẰM TRONG giới hạn cho phép của "
         "từng khớp. Tuyệt đối không vượt biên.",
         "3. Điều khiển theo VÒNG KÍN: mỗi lần chỉ đề xuất bước di chuyển an "
-        "toàn, nhỏ vừa phải tiến gần mục tiêu; ở bước cuối mới đóng kẹp.",
-        "4. Chỉ đóng kẹp khi đầu kẹp đã thẳng hàng và đủ gần vật trong ảnh.",
-        "5. Đầu ra DUY NHẤT là một đối tượng JSON hợp lệ, không kèm văn bản nào "
+        "toàn, nhỏ vừa phải tiến gần mục tiêu hiện tại của pha.",
+        "4. Chỉ ĐÓNG kẹp khi đầu kẹp đã thẳng hàng và đủ gần vật trong ảnh.",
+        "5. Sau khi đã kẹp được vật thì GIỮ kẹp đóng (gripper_action=\"hold\") "
+        "trong suốt lúc nâng và di chuyển; chỉ MỞ kẹp khi đầu kẹp đã ở PHÍA "
+        "TRÊN lòng giỏ để thả vật vào đúng giỏ.",
+        "6. Đầu ra DUY NHẤT là một đối tượng JSON hợp lệ, không kèm văn bản nào "
         "khác, không markdown, không khối ```.",
     ])
 
@@ -111,7 +119,8 @@ def build_user_prompt(sim, target_desc: str) -> str:
     joints_csv = ", ".join(f'"{n}"' for n in JOINT_NAMES)
     return "\n".join([
         "# MỤC TIÊU",
-        f"Điều khiển cánh tay SO-101 để gắp: **{target_desc}**.",
+        f"Điều khiển cánh tay SO-101 để GẮP **{target_desc}** rồi MANG và THẢ "
+        "vật đó VÀO GIỎ. Nhiệm vụ hoàn thành khi vật đã nằm gọn trong giỏ.",
         "",
         "# BỐI CẢNH 2 CAMERA",
         "Bạn nhận được 2 ảnh theo thứ tự:",
@@ -120,7 +129,11 @@ def build_user_prompt(sim, target_desc: str) -> str:
         "trước/sau, đã thẳng hàng chưa, đã đủ gần để đóng kẹp chưa).",
         "- Ảnh 2 — CAMERA GIÁ ĐỠ (stand_cam): đặt cố định bên cạnh, nhìn ngang "
         "toàn cảnh. Dùng để ước lượng tư thế tổng thể của cánh tay, độ cao đầu "
-        "kẹp và khoảng cách thô tới vật.",
+        "kẹp, khoảng cách thô tới vật VÀ tới giỏ.",
+        "",
+        "Bạn KHÔNG được cấp toạ độ của vật hay của giỏ. Hãy tự ĐỊNH VỊ chúng "
+        "trong không gian dựa hoàn toàn vào những gì quan sát được trong 2 ảnh "
+        "(vị trí trái/phải, xa/gần, cao/thấp của vật, của giỏ và của đầu kẹp).",
         "",
         "# CƠ CẤU CHẤP HÀNH (6 khớp position-controlled, đơn vị RADIAN)",
         "Mỗi khớp là một động cơ vị trí: bạn đặt GÓC MỤC TIÊU tuyệt đối, bộ "
@@ -132,23 +145,32 @@ def build_user_prompt(sim, target_desc: str) -> str:
         "Quy ước về kẹp (`gripper`): giá trị càng LỚN càng MỞ rộng, càng NHỎ "
         "(về phía giới hạn dưới) càng ĐÓNG chặt.",
         "",
-        "# QUY TRÌNH GẮP (các pha)",
+        "# QUY TRÌNH GẮP & THẢ VÀO GIỎ (các pha)",
         '- "approach": di chuyển đầu kẹp lại gần vật, kẹp đang MỞ.',
         '- "align": tinh chỉnh shoulder_pan / wrist_roll / wrist_flex để đầu '
         "kẹp thẳng hàng và bao quanh vật.",
-        '- "grasp": đầu kẹp đã ôm vật -> ĐÓNG kẹp.',
-        '- "lift": nâng shoulder_lift / elbow_flex để nhấc vật lên khỏi sàn.',
-        "Chọn đúng pha hiện tại dựa trên những gì thấy trong ảnh.",
+        '- "grasp": đầu kẹp đã ôm vật -> ĐÓNG kẹp (gripper_action="close").',
+        '- "lift": nâng shoulder_lift / elbow_flex để nhấc vật lên khỏi sàn, '
+        'GIỮ kẹp đóng (gripper_action="hold").',
+        '- "carry": xoay shoulder_pan và chỉnh tầm với để mang vật tới PHÍA '
+        'TRÊN lòng giỏ, vẫn GIỮ kẹp đóng (gripper_action="hold").',
+        '- "release": đầu kẹp đã ở trên lòng giỏ và đủ cao -> MỞ kẹp '
+        '(gripper_action="open") cho vật rơi vào giỏ. Khi vật đã vào giỏ, đặt '
+        "done=true.",
+        "Chọn đúng pha hiện tại dựa trên những gì thấy trong ảnh. Không bỏ qua "
+        "pha; chỉ chuyển pha khi điều kiện của pha hiện tại đã đạt.",
         "",
         "# ĐỊNH DẠNG ĐẦU RA (chỉ JSON, không thêm gì khác)",
         "Trả về đúng cấu trúc sau:",
-        '- "reasoning": (string) suy luận ngắn gọn từ 2 ảnh.',
+        '- "reasoning": (string) suy luận ngắn gọn từ 2 ảnh: vị trí vật, vị trí '
+        "giỏ, vị trí đầu kẹp và bước kế tiếp.",
         '- "target_object": (string) tên/định danh vật đang nhắm tới.',
-        '- "phase": một trong ["approach","align","grasp","lift"].',
+        '- "phase": một trong ["approach","align","grasp","lift","carry",'
+        '"release"].',
         '- "gripper_action": "open" | "close" | "hold".',
         '- "joint_angles_rad": (object) góc mục tiêu radian cho ĐỦ 6 khớp: '
         f"{joints_csv}.",
-        '- "done": (bool) true khi đã gắp và nâng vật thành công.',
+        '- "done": (bool) true KHI VÀ CHỈ KHI vật đã được thả nằm trong giỏ.',
         '- "confidence": (float 0..1) mức độ chắc chắn.',
         "",
         "Ví dụ một đầu ra hợp lệ:",
