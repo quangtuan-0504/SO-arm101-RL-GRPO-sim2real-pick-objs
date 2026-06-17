@@ -29,6 +29,20 @@ JOINT_NAMES = [
 # Lấy từ site "gripperframe" trong model gốc so101_new_calib.xml.
 GRASP_POINT_LOCAL = np.array([-0.0079, -0.0002, -0.0981])
 
+# Màu mặc định cho từng KHÂU của cánh tay (theo tên body trong model gốc).
+# Mỗi khâu một màu tương phản, tách biệt với sàn xanh và các khối
+# đỏ/lục/lam để VLM dễ phân biệt khâu và đọc góc khớp. Có thể ghi đè
+# trong config.yaml qua khoá "link_colors".
+DEFAULT_LINK_COLORS = {
+    "base": [0.35, 0.35, 0.38, 1.0],            # đế: xám trung tính
+    "shoulder": [1.00, 0.55, 0.00, 1.0],        # shoulder_pan: cam
+    "upper_arm": [1.00, 0.85, 0.10, 1.0],       # shoulder_lift: vàng
+    "lower_arm": [0.65, 0.20, 0.80, 1.0],       # elbow_flex: tím
+    "wrist": [0.10, 0.80, 0.85, 1.0],           # wrist_flex: lục lam (cyan)
+    "gripper": [0.95, 0.95, 0.97, 1.0],         # wrist_roll: trắng
+    "moving_jaw_so101_v1": [1.00, 0.45, 0.70, 1.0],  # gripper (ngàm động): hồng
+}
+
 _SHAPE_MAP = {
     "box": mujoco.mjtGeom.mjGEOM_BOX,
     "cylinder": mujoco.mjtGeom.mjGEOM_CYLINDER,
@@ -77,6 +91,7 @@ def build_spec(config: dict) -> mujoco.MjSpec:
 
     _configure_physics(spec)
     _place_arm(spec, config.get("arm", {}))
+    _color_links(spec, config.get("link_colors", {}))
     _add_wrist_camera(spec, config.get("wrist_camera", {}))
     _add_stand_camera(spec, config.get("stand_camera", {}))
     _add_table(spec, config.get("table", {}))
@@ -110,6 +125,29 @@ def _place_arm(spec, arm_cfg):
     base = spec.body("base")
     base.pos = list(arm_cfg.get("base_pos", [0.0, 0.0, 0.0]))
     base.quat = list(_euler_deg_to_quat(arm_cfg.get("base_euler_deg", [0, 0, 0])))
+
+
+def _color_links(spec, color_cfg):
+    """Tô màu từng KHÂU của cánh tay để VLM dễ phân biệt và đọc góc khớp.
+
+    Gán một màu riêng cho mọi geom thuộc cùng một body (khâu). Đặt rgba
+    trực tiếp trên geom sẽ ghi đè màu của material gốc (material chỉ được
+    dùng khi geom giữ rgba mặc định). Bảng màu lấy từ DEFAULT_LINK_COLORS,
+    có thể ghi đè theo tên khâu qua config "link_colors".
+    """
+    colors = dict(DEFAULT_LINK_COLORS)
+    for name, rgba in (color_cfg or {}).items():
+        colors[name] = list(rgba)
+
+    for body_name, rgba in colors.items():
+        try:
+            body = spec.body(body_name)
+        except (KeyError, ValueError):
+            continue  # bỏ qua nếu model không có khâu này
+        if body is None:
+            continue
+        for geom in body.geoms:
+            geom.rgba = list(rgba)
 
 
 def _add_wrist_camera(spec, cam_cfg):
