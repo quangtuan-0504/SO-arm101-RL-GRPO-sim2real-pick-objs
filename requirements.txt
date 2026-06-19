@@ -3,3 +3,7 @@ numpy>=2.0
 PyYAML>=6.0
 glfw>=2.7
 openai>=1.30
+# --- Game service (Mac) ---
+fastapi>=0.115
+uvicorn[standard]>=0.30
+requests>=2.31

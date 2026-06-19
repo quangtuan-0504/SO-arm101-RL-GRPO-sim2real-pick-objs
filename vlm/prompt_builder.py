@@ -50,27 +50,24 @@ JOINT_DESCRIPTIONS = {
 }
 
 
-def _joint_table(sim) -> str:
-    """Bảng giới hạn góc (radian) + tư thế home đọc động từ sim."""
-    home = sim.config.get("arm", {}).get("home_pose", {})
+def _joint_table_from_spec(joints: list) -> str:
+    """Bảng giới hạn góc (radian) + home từ danh sách spec [{name,lo,hi,home}]."""
     lines = [
         "| # | Tên khớp | Giới hạn (radian) | Home | Mô tả |",
         "|---|----------|-------------------|------|-------|",
     ]
-    for i, name in enumerate(JOINT_NAMES, 1):
-        lo, hi = sim.get_ctrl_range(name)
-        h = float(home.get(name, 0.0))
+    for i, j in enumerate(joints, 1):
+        name = j["name"]
         lines.append(
-            f"| {i} | `{name}` | [{lo:.3f}, {hi:.3f}] | {h:.2f} | "
-            f"{JOINT_DESCRIPTIONS[name]} |"
+            f"| {i} | `{name}` | [{j['lo']:.3f}, {j['hi']:.3f}] | "
+            f"{j['home']:.2f} | {JOINT_DESCRIPTIONS[name]} |"
         )
     return "\n".join(lines)
 
 
-def _output_schema_example(sim) -> str:
-    """Ví dụ JSON đầu ra hợp lệ, dùng chính home pose làm minh hoạ."""
-    home = sim.config.get("arm", {}).get("home_pose", {})
-    angles = {n: round(float(home.get(n, 0.0)), 3) for n in JOINT_NAMES}
+def _output_schema_example_from_spec(joints: list) -> str:
+    """Ví dụ JSON đầu ra hợp lệ, dùng home pose từ spec làm minh hoạ."""
+    angles = {j["name"]: round(float(j["home"]), 3) for j in joints}
     example = {
         "reasoning": "Mô tả ngắn gọn vị trí vật và giỏ trong 2 ảnh, đầu kẹp "
                      "đang ở đâu so với chúng, và bước di chuyển kế tiếp.",
@@ -82,6 +79,24 @@ def _output_schema_example(sim) -> str:
         "confidence": 0.0,
     }
     return json.dumps(example, ensure_ascii=False, indent=2)
+
+
+def _joint_table(sim) -> str:
+    """Bảng giới hạn góc (radian) + tư thế home đọc động từ sim."""
+    home = sim.config.get("arm", {}).get("home_pose", {})
+    joints = []
+    for name in JOINT_NAMES:
+        lo, hi = sim.get_ctrl_range(name)
+        joints.append({"name": name, "lo": lo, "hi": hi,
+                       "home": float(home.get(name, 0.0))})
+    return _joint_table_from_spec(joints)
+
+
+def _output_schema_example(sim) -> str:
+    """Ví dụ JSON đầu ra hợp lệ, dùng chính home pose làm minh hoạ."""
+    home = sim.config.get("arm", {}).get("home_pose", {})
+    joints = [{"name": n, "home": float(home.get(n, 0.0))} for n in JOINT_NAMES]
+    return _output_schema_example_from_spec(joints)
 
 
 def build_system_prompt() -> str:
@@ -115,8 +130,19 @@ def build_system_prompt() -> str:
 
 
 def build_user_prompt(sim, target_desc: str) -> str:
-    """User prompt: mục tiêu cụ thể + mô tả cơ cấu + format đầu ra."""
-    joints_csv = ", ".join(f'"{n}"' for n in JOINT_NAMES)
+    """User prompt: mục tiêu cụ thể + mô tả cơ cấu + format đầu ra (từ sim)."""
+    home = sim.config.get("arm", {}).get("home_pose", {})
+    joints = []
+    for name in JOINT_NAMES:
+        lo, hi = sim.get_ctrl_range(name)
+        joints.append({"name": name, "lo": lo, "hi": hi,
+                       "home": float(home.get(name, 0.0))})
+    return build_user_prompt_from_spec(joints, target_desc)
+
+
+def build_user_prompt_from_spec(joints: list, target_desc: str) -> str:
+    """User prompt từ danh sách spec khớp [{name,lo,hi,home}] (không cần sim)."""
+    joints_csv = ", ".join(f'"{j["name"]}"' for j in joints)
     return "\n".join([
         "# MỤC TIÊU",
         f"Điều khiển cánh tay SO-101 để GẮP **{target_desc}** rồi MANG và THẢ "
@@ -140,7 +166,7 @@ def build_user_prompt(sim, target_desc: str) -> str:
         "điều khiển PID nội bộ sẽ đưa khớp tới góc đó. Tư thế \"home\" là tư "
         "thế nghỉ an toàn để tham chiếu.",
         "",
-        _joint_table(sim),
+        _joint_table_from_spec(joints),
         "",
         "Quy ước về kẹp (`gripper`): giá trị càng LỚN càng MỞ rộng, càng NHỎ "
         "(về phía giới hạn dưới) càng ĐÓNG chặt.",
@@ -174,7 +200,7 @@ def build_user_prompt(sim, target_desc: str) -> str:
         '- "confidence": (float 0..1) mức độ chắc chắn.',
         "",
         "Ví dụ một đầu ra hợp lệ:",
-        _output_schema_example(sim),
+        _output_schema_example_from_spec(joints),
         "",
         "Bây giờ hãy phân tích 2 ảnh và xuất JSON điều khiển cho bước tiếp theo.",
     ])
@@ -187,19 +213,32 @@ def build_messages(sim, target_desc: str,
     ``wrist_img_b64`` / ``stand_img_b64`` là data URL, ví dụ:
     ``"data:image/png;base64,<...>"``.
     """
+    return _assemble_messages(build_user_prompt(sim, target_desc),
+                              wrist_img_b64, stand_img_b64)
+
+
+def build_messages_from_spec(joints: list, target_desc: str,
+                             wrist_img_b64: str, stand_img_b64: str) -> list:
+    """Như ``build_messages`` nhưng dùng spec khớp tĩnh (cho server GPU).
+
+    ``joints`` = [{name, lo, hi, home}] (đọc từ ``dataset/robot_spec.json``).
+    """
+    return _assemble_messages(build_user_prompt_from_spec(joints, target_desc),
+                              wrist_img_b64, stand_img_b64)
+
+
+def _assemble_messages(user_prompt: str, wrist_img_b64: str,
+                       stand_img_b64: str) -> list:
     return [
         {"role": "system", "content": build_system_prompt()},
         {
             "role": "user",
             "content": [
-                {"type": "text",
-                 "text": build_user_prompt(sim, target_desc)},
+                {"type": "text", "text": user_prompt},
                 {"type": "text", "text": "Ảnh 1 — CAMERA CỔ TAY (wrist_cam):"},
-                {"type": "image_url",
-                 "image_url": {"url": wrist_img_b64}},
+                {"type": "image_url", "image_url": {"url": wrist_img_b64}},
                 {"type": "text", "text": "Ảnh 2 — CAMERA GIÁ ĐỠ (stand_cam):"},
-                {"type": "image_url",
-                 "image_url": {"url": stand_img_b64}},
+                {"type": "image_url", "image_url": {"url": stand_img_b64}},
             ],
         },
     ]

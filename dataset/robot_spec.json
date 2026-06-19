@@ -1,0 +1,40 @@
+{
+  "joints": [
+    {
+      "name": "shoulder_pan",
+      "lo": -1.91986,
+      "hi": 1.91986,
+      "home": 0.0
+    },
+    {
+      "name": "shoulder_lift",
+      "lo": -1.74533,
+      "hi": 1.74533,
+      "home": -0.8
+    },
+    {
+      "name": "elbow_flex",
+      "lo": -1.69,
+      "hi": 1.69,
+      "home": 1.2
+    },
+    {
+      "name": "wrist_flex",
+      "lo": -1.65806,
+      "hi": 1.65806,
+      "home": 0.9
+    },
+    {
+      "name": "wrist_roll",
+      "lo": -2.74385,
+      "hi": 2.84121,
+      "home": 1.57
+    },
+    {
+      "name": "gripper",
+      "lo": -0.17453,
+      "hi": 1.74533,
+      "home": 1.2
+    }
+  ]
+}
