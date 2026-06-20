@@ -1,11 +1,12 @@
-"""Sinh prompt cho VLM (Qwen-VL) để dự đoán góc quay điều khiển SO-101.
+"""Build the VLM (Qwen-VL) prompt for predicting SO-101 control angles.
 
-Module này tạo ra cặp (system_prompt, user_prompt) + cấu trúc messages sẵn
-sàng gửi cho Qwen-VL. Giới hạn góc của từng khớp được đọc ĐỘNG từ
-``Simulation`` để prompt luôn khớp với mô phỏng, tránh lệch thông số.
+This module produces a (system_prompt, user_prompt) pair plus a ready-to-send
+``messages`` structure for Qwen-VL. Each joint's angle limits are read
+DYNAMICALLY from ``Simulation`` so the prompt always matches the simulation and
+never drifts from the actual parameters.
 
-Cách dùng nhanh
----------------
+Quick start
+-----------
     from sim.simulation import Simulation
     from vlm.prompt_builder import build_messages
     import yaml
@@ -14,11 +15,11 @@ Cách dùng nhanh
     sim = Simulation(cfg)
     messages = build_messages(
         sim,
-        target_desc="khối lập phương màu đỏ (cube_red)",
-        wrist_img_b64=...,   # ảnh camera 1 dạng base64 (data URL)
-        stand_img_b64=...,   # ảnh camera 2 dạng base64 (data URL)
+        target_desc="the red cube (cube_red)",
+        wrist_img_b64=...,   # camera 1 image as base64 (data URL)
+        stand_img_b64=...,   # camera 2 image as base64 (data URL)
     )
-    # messages -> đưa vào client OpenAI-compatible của Qwen-VL
+    # messages -> feed into the OpenAI-compatible Qwen-VL client
 """
 from __future__ import annotations
 
@@ -26,29 +27,31 @@ import json
 
 from sim.constants import JOINT_NAMES
 
-# Mô tả ý nghĩa + chiều dương của từng khớp (để VLM suy luận đúng hướng).
+# Meaning + positive direction of each joint (so the VLM reasons about the
+# correct direction).
 JOINT_DESCRIPTIONS = {
-    "shoulder_pan":  "Xoay toàn thân cánh tay quanh trục thẳng đứng (z). "
-                     "Giá trị + xoay thân sang một bên, - xoay sang bên kia. "
-                     "Dùng để nhắm cánh tay theo phương ngang về phía vật.",
-    "shoulder_lift": "Nâng/hạ vai (đoạn cánh tay trên). Giá trị + nâng vai lên, "
-                     "- hạ vai xuống gần mặt sàn.",
-    "elbow_flex":    "Gập/duỗi khuỷu tay. Điều chỉnh tầm với (xa/gần) và độ cao "
-                     "của đầu kẹp.",
-    "wrist_flex":    "Gập cổ tay lên/xuống. Dùng để chỉnh phương tiếp cận của "
-                     "kẹp (gắp từ trên xuống hay từ ngang vào).",
-    "wrist_roll":    "Xoay cổ tay quanh trục kẹp. Dùng để căn hướng của hai má "
-                     "kẹp cho khớp với chiều dài/hướng của vật.",
-    "gripper":       "Độ mở của kẹp. Giá trị LỚN = mở rộng, giá trị NHỎ (gần "
-                     "giới hạn dưới) = đóng/kẹp chặt.",
+    "shoulder_pan":  "Rotate the whole arm about the vertical axis (z). "
+                     "Positive turns the body one way, negative the other. "
+                     "Used to aim the arm horizontally toward the object.",
+    "shoulder_lift": "Raise/lower the shoulder (the upper-arm segment). "
+                     "Positive raises the shoulder, negative lowers it toward "
+                     "the floor.",
+    "elbow_flex":    "Flex/extend the elbow. Adjusts reach (near/far) and the "
+                     "height of the gripper.",
+    "wrist_flex":    "Flex the wrist up/down. Used to set the gripper's "
+                     "approach direction (top-down grasp vs. side grasp).",
+    "wrist_roll":    "Rotate the wrist about the gripper axis. Used to align "
+                     "the two jaws with the length/orientation of the object.",
+    "gripper":       "Gripper opening. LARGE value = open wide, SMALL value "
+                     "(near the lower limit) = closed/clamped tight.",
 }
 
 
 def _joint_table_from_spec(joints: list) -> str:
-    """Bảng giới hạn góc (radian) + home từ danh sách spec [{name,lo,hi,home}]."""
+    """Angle-limit table (radians) + home from a spec list [{name,lo,hi,home}]."""
     lines = [
-        "| # | Tên khớp | Giới hạn (radian) | Home | Mô tả |",
-        "|---|----------|-------------------|------|-------|",
+        "| # | Joint name | Limit (radians) | Home | Description |",
+        "|---|------------|-----------------|------|-------------|",
     ]
     for i, j in enumerate(joints, 1):
         name = j["name"]
@@ -60,11 +63,12 @@ def _joint_table_from_spec(joints: list) -> str:
 
 
 def _output_schema_example_from_spec(joints: list) -> str:
-    """Ví dụ JSON đầu ra hợp lệ, dùng home pose từ spec làm minh hoạ."""
+    """A valid example JSON output, using the home pose from the spec."""
     angles = {j["name"]: round(float(j["home"]), 3) for j in joints}
     example = {
-        "reasoning": "Mô tả ngắn gọn vị trí vật và giỏ trong 2 ảnh, đầu kẹp "
-                     "đang ở đâu so với chúng, và bước di chuyển kế tiếp.",
+        "reasoning": "A brief description of where the object and the basket "
+                     "are in the 2 images, where the gripper is relative to "
+                     "them, and the next move.",
         "target_object": "cube_red",
         "phase": "approach",
         "gripper_action": "open",
@@ -76,7 +80,7 @@ def _output_schema_example_from_spec(joints: list) -> str:
 
 
 def _joint_table(sim) -> str:
-    """Bảng giới hạn góc (radian) + tư thế home đọc động từ sim."""
+    """Angle-limit table (radians) + home pose read dynamically from sim."""
     home = sim.config.get("arm", {}).get("home_pose", {})
     joints = []
     for name in JOINT_NAMES:
@@ -87,44 +91,46 @@ def _joint_table(sim) -> str:
 
 
 def _output_schema_example(sim) -> str:
-    """Ví dụ JSON đầu ra hợp lệ, dùng chính home pose làm minh hoạ."""
+    """A valid example JSON output, using the home pose as illustration."""
     home = sim.config.get("arm", {}).get("home_pose", {})
     joints = [{"name": n, "home": float(home.get(n, 0.0))} for n in JOINT_NAMES]
     return _output_schema_example_from_spec(joints)
 
 
 def build_system_prompt() -> str:
-    """System prompt: vai trò + quy tắc bất biến của VLM."""
+    """System prompt: the VLM's role + invariant rules."""
     return "\n".join([
-        "Bạn là bộ điều khiển thị giác (vision-based controller) cho cánh tay "
-        "robot 6 bậc tự do SO-101 trong môi trường mô phỏng MuJoCo. Nhiệm vụ "
-        "của bạn là QUAN SÁT hai ảnh camera mô tả hiện trạng, rồi DỰ ĐOÁN góc "
-        "quay mục tiêu (radian) cho 6 khớp để cánh tay GẮP đúng vật thể được "
-        "yêu cầu rồi MANG VÀ THẢ vật đó VÀO GIỎ.",
+        "You are a vision-based controller for a 6-DOF SO-101 robot arm in a "
+        "MuJoCo simulation environment. Your task is to OBSERVE two camera "
+        "images describing the current state, then PREDICT the target rotation "
+        "angles (radians) for the 6 joints so the arm GRASPS the requested "
+        "object and then CARRIES AND DROPS it INTO THE BASKET.",
         "",
-        "Toàn bộ nhiệm vụ là một chu trình gắp-và-thả (pick-and-place):",
-        "tiếp cận vật -> căn chỉnh -> kẹp -> nâng lên -> di chuyển tới phía "
-        "trên giỏ -> mở kẹp thả vật vào giỏ. Chỉ báo done=true khi vật đã nằm "
-        "trong giỏ.",
+        "The whole task is a pick-and-place cycle:",
+        "approach the object -> align -> grasp -> lift -> move above the "
+        "basket -> open the gripper to drop the object into the basket. Only "
+        "report done=true once the object is inside the basket.",
         "",
-        "Nguyên tắc bắt buộc:",
-        "1. Chỉ suy luận dựa trên những gì NHÌN THẤY trong 2 ảnh, không bịa "
-        "thông tin không quan sát được.",
-        "2. Mọi góc đầu ra phải là radian và NẰM TRONG giới hạn cho phép của "
-        "từng khớp. Tuyệt đối không vượt biên.",
-        "3. Điều khiển theo VÒNG KÍN: mỗi lần chỉ đề xuất bước di chuyển an "
-        "toàn, nhỏ vừa phải tiến gần mục tiêu hiện tại của pha.",
-        "4. Chỉ ĐÓNG kẹp khi đầu kẹp đã thẳng hàng và đủ gần vật trong ảnh.",
-        "5. Sau khi đã kẹp được vật thì GIỮ kẹp đóng (gripper_action=\"hold\") "
-        "trong suốt lúc nâng và di chuyển; chỉ MỞ kẹp khi đầu kẹp đã ở PHÍA "
-        "TRÊN lòng giỏ để thả vật vào đúng giỏ.",
-        "6. Đầu ra DUY NHẤT là một đối tượng JSON hợp lệ, không kèm văn bản nào "
-        "khác, không markdown, không khối ```.",
+        "Mandatory principles:",
+        "1. Reason ONLY about what is VISIBLE in the 2 images; do not fabricate "
+        "information that cannot be observed.",
+        "2. Every output angle must be in radians and MUST BE WITHIN the "
+        "allowed limit of each joint. Never exceed the bounds.",
+        "3. Control in CLOSED LOOP: each time, propose only one safe, "
+        "moderately small move that gets closer to the current phase's target.",
+        "4. Only CLOSE the gripper once it is aligned with and close enough to "
+        "the object in the image.",
+        "5. After the object has been grasped, KEEP the gripper closed "
+        "(gripper_action=\"hold\") throughout lifting and moving; only OPEN the "
+        "gripper once it is ABOVE the basket's mouth to drop the object into "
+        "the correct basket.",
+        "6. The ONLY output is a single valid JSON object, with no other text, "
+        "no markdown, no ``` blocks.",
     ])
 
 
 def build_user_prompt(sim, target_desc: str) -> str:
-    """User prompt: mục tiêu cụ thể + mô tả cơ cấu + format đầu ra (từ sim)."""
+    """User prompt: concrete goal + mechanism description + output format (from sim)."""
     home = sim.config.get("arm", {}).get("home_pose", {})
     joints = []
     for name in JOINT_NAMES:
@@ -135,76 +141,86 @@ def build_user_prompt(sim, target_desc: str) -> str:
 
 
 def build_user_prompt_from_spec(joints: list, target_desc: str) -> str:
-    """User prompt từ danh sách spec khớp [{name,lo,hi,home}] (không cần sim)."""
+    """User prompt from a static joint spec list [{name,lo,hi,home}] (no sim needed)."""
     joints_csv = ", ".join(f'"{j["name"]}"' for j in joints)
     return "\n".join([
-        "# MỤC TIÊU",
-        f"Điều khiển cánh tay SO-101 để GẮP **{target_desc}** rồi MANG và THẢ "
-        "vật đó VÀO GIỎ. Nhiệm vụ hoàn thành khi vật đã nằm gọn trong giỏ.",
+        "# GOAL",
+        f"Control the SO-101 arm to GRASP **{target_desc}** then CARRY and DROP "
+        "it INTO THE BASKET. The task is complete once the object rests inside "
+        "the basket.",
         "",
-        "# BỐI CẢNH 2 CAMERA",
-        "Bạn nhận được 2 ảnh theo thứ tự:",
-        "- Ảnh 1 — CAMERA CỔ TAY (wrist_cam): gắn cứng trên kẹp, nhìn cận cảnh "
-        "vùng kẹp gắp. Dùng để căn chính xác đầu kẹp so với vật (trái/phải, "
-        "trước/sau, đã thẳng hàng chưa, đã đủ gần để đóng kẹp chưa).",
-        "- Ảnh 2 — CAMERA GIÁ ĐỠ (stand_cam): đặt cố định bên cạnh, nhìn ngang "
-        "toàn cảnh. Dùng để ước lượng tư thế tổng thể của cánh tay, độ cao đầu "
-        "kẹp, khoảng cách thô tới vật VÀ tới giỏ.",
+        "# TWO-CAMERA CONTEXT",
+        "You receive 2 images in this order:",
+        "- Image 1 — WRIST CAMERA (wrist_cam): rigidly mounted on the gripper, "
+        "a close-up view of the grasping area. Use it to precisely align the "
+        "gripper relative to the object (left/right, front/back, whether it is "
+        "aligned, whether it is close enough to close the gripper).",
+        "- Image 2 — STAND CAMERA (stand_cam): fixed to the side, a wide "
+        "horizontal overview. Use it to estimate the arm's overall pose, the "
+        "gripper height, and the rough distance to the object AND to the "
+        "basket.",
         "",
-        "Bạn KHÔNG được cấp toạ độ của vật hay của giỏ. Hãy tự ĐỊNH VỊ chúng "
-        "trong không gian dựa hoàn toàn vào những gì quan sát được trong 2 ảnh "
-        "(vị trí trái/phải, xa/gần, cao/thấp của vật, của giỏ và của đầu kẹp).",
+        "You are NOT given the coordinates of the object or the basket. You "
+        "must LOCATE them in space entirely from what you observe in the 2 "
+        "images (left/right, far/near, high/low positions of the object, the "
+        "basket, and the gripper).",
         "",
-        "# CƠ CẤU CHẤP HÀNH (6 khớp position-controlled, đơn vị RADIAN)",
-        "Mỗi khớp là một động cơ vị trí: bạn đặt GÓC MỤC TIÊU tuyệt đối, bộ "
-        "điều khiển PID nội bộ sẽ đưa khớp tới góc đó. Tư thế \"home\" là tư "
-        "thế nghỉ an toàn để tham chiếu.",
+        "# ACTUATORS (6 position-controlled joints, units in RADIANS)",
+        "Each joint is a position motor: you set an absolute TARGET ANGLE, and "
+        "the internal PID controller drives the joint to that angle. The "
+        "\"home\" pose is a safe rest pose for reference.",
         "",
         _joint_table_from_spec(joints),
         "",
-        "Quy ước về kẹp (`gripper`): giá trị càng LỚN càng MỞ rộng, càng NHỎ "
-        "(về phía giới hạn dưới) càng ĐÓNG chặt.",
+        "Gripper convention (`gripper`): the LARGER the value the more OPEN, "
+        "the SMALLER (toward the lower limit) the more tightly CLOSED.",
         "",
-        "# QUY TRÌNH GẮP & THẢ VÀO GIỎ (các pha)",
-        '- "approach": di chuyển đầu kẹp lại gần vật, kẹp đang MỞ.',
-        '- "align": tinh chỉnh shoulder_pan / wrist_roll / wrist_flex để đầu '
-        "kẹp thẳng hàng và bao quanh vật.",
-        '- "grasp": đầu kẹp đã ôm vật -> ĐÓNG kẹp (gripper_action="close").',
-        '- "lift": nâng shoulder_lift / elbow_flex để nhấc vật lên khỏi sàn, '
-        'GIỮ kẹp đóng (gripper_action="hold").',
-        '- "carry": xoay shoulder_pan và chỉnh tầm với để mang vật tới PHÍA '
-        'TRÊN lòng giỏ, vẫn GIỮ kẹp đóng (gripper_action="hold").',
-        '- "release": đầu kẹp đã ở trên lòng giỏ và đủ cao -> MỞ kẹp '
-        '(gripper_action="open") cho vật rơi vào giỏ. Khi vật đã vào giỏ, đặt '
-        "done=true.",
-        "Chọn đúng pha hiện tại dựa trên những gì thấy trong ảnh. Không bỏ qua "
-        "pha; chỉ chuyển pha khi điều kiện của pha hiện tại đã đạt.",
+        "# PICK & PLACE-INTO-BASKET PROCEDURE (phases)",
+        '- "approach": move the gripper closer to the object, gripper OPEN.',
+        '- "align": fine-tune shoulder_pan / wrist_roll / wrist_flex so the '
+        "gripper is aligned with and surrounds the object.",
+        '- "grasp": the gripper is around the object -> CLOSE the gripper '
+        '(gripper_action="close").',
+        '- "lift": raise shoulder_lift / elbow_flex to lift the object off the '
+        'floor, KEEPING the gripper closed (gripper_action="hold").',
+        '- "carry": rotate shoulder_pan and adjust reach to bring the object '
+        'ABOVE the basket mouth, still KEEPING the gripper closed '
+        '(gripper_action="hold").',
+        '- "release": the gripper is above the basket mouth and high enough -> '
+        'OPEN the gripper (gripper_action="open") to drop the object into the '
+        "basket. Once the object is in the basket, set done=true.",
+        "Pick the correct current phase based on what you see in the images. Do "
+        "not skip phases; only move to the next phase when the current phase's "
+        "condition is met.",
         "",
-        "# ĐỊNH DẠNG ĐẦU RA (chỉ JSON, không thêm gì khác)",
-        "Trả về đúng cấu trúc sau:",
-        '- "reasoning": (string) suy luận ngắn gọn từ 2 ảnh: vị trí vật, vị trí '
-        "giỏ, vị trí đầu kẹp và bước kế tiếp.",
-        '- "target_object": (string) tên/định danh vật đang nhắm tới.',
-        '- "phase": một trong ["approach","align","grasp","lift","carry",'
+        "# OUTPUT FORMAT (JSON only, nothing else)",
+        "Return exactly the following structure:",
+        '- "reasoning": (string) brief reasoning from the 2 images: object '
+        "position, basket position, gripper position, and the next step.",
+        '- "target_object": (string) the name/identifier of the object being '
+        "targeted.",
+        '- "phase": one of ["approach","align","grasp","lift","carry",'
         '"release"].',
         '- "gripper_action": "open" | "close" | "hold".',
-        '- "joint_angles_rad": (object) góc mục tiêu radian cho ĐỦ 6 khớp: '
+        '- "joint_angles_rad": (object) target radian angles for ALL 6 joints: '
         f"{joints_csv}.",
-        '- "done": (bool) true KHI VÀ CHỈ KHI vật đã được thả nằm trong giỏ.',
-        '- "confidence": (float 0..1) mức độ chắc chắn.',
+        '- "done": (bool) true IF AND ONLY IF the object has been dropped and '
+        "rests inside the basket.",
+        '- "confidence": (float 0..1) the level of certainty.',
         "",
-        "Ví dụ một đầu ra hợp lệ:",
+        "Example of a valid output:",
         _output_schema_example_from_spec(joints),
         "",
-        "Bây giờ hãy phân tích 2 ảnh và xuất JSON điều khiển cho bước tiếp theo.",
+        "Now analyze the 2 images and output the control JSON for the next "
+        "step.",
     ])
 
 
 def build_messages(sim, target_desc: str,
                    wrist_img_b64: str, stand_img_b64: str) -> list:
-    """Tạo messages OpenAI-compatible (Qwen-VL) gồm 2 ảnh + prompt.
+    """Build OpenAI-compatible (Qwen-VL) messages with 2 images + prompt.
 
-    ``wrist_img_b64`` / ``stand_img_b64`` là data URL, ví dụ:
+    ``wrist_img_b64`` / ``stand_img_b64`` are data URLs, e.g.:
     ``"data:image/png;base64,<...>"``.
     """
     return _assemble_messages(build_user_prompt(sim, target_desc),
@@ -213,9 +229,9 @@ def build_messages(sim, target_desc: str,
 
 def build_messages_from_spec(joints: list, target_desc: str,
                              wrist_img_b64: str, stand_img_b64: str) -> list:
-    """Như ``build_messages`` nhưng dùng spec khớp tĩnh (cho server GPU).
+    """Like ``build_messages`` but uses a static joint spec (for the GPU server).
 
-    ``joints`` = [{name, lo, hi, home}] (đọc từ ``dataset/robot_spec.json``).
+    ``joints`` = [{name, lo, hi, home}] (read from ``dataset/robot_spec.json``).
     """
     return _assemble_messages(build_user_prompt_from_spec(joints, target_desc),
                               wrist_img_b64, stand_img_b64)
@@ -229,16 +245,16 @@ def _assemble_messages(user_prompt: str, wrist_img_b64: str,
             "role": "user",
             "content": [
                 {"type": "text", "text": user_prompt},
-                {"type": "text", "text": "Ảnh 1 — CAMERA CỔ TAY (wrist_cam):"},
+                {"type": "text", "text": "Image 1 — WRIST CAMERA (wrist_cam):"},
                 {"type": "image_url", "image_url": {"url": wrist_img_b64}},
-                {"type": "text", "text": "Ảnh 2 — CAMERA GIÁ ĐỠ (stand_cam):"},
+                {"type": "text", "text": "Image 2 — STAND CAMERA (stand_cam):"},
                 {"type": "image_url", "image_url": {"url": stand_img_b64}},
             ],
         },
     ]
 
 if __name__ == "__main__":
-    # Import cục bộ: chỉ cần khi chạy thử trên Mac (có mujoco).
+    # Local import: only needed when running a test on Mac (with mujoco).
     import yaml
     from sim.simulation import Simulation
 
@@ -246,7 +262,7 @@ if __name__ == "__main__":
     sim = Simulation(cfg)
 
     system_prompt = build_system_prompt()
-    user_prompt = build_user_prompt(sim, target_desc="khối lập phương màu đỏ (cube_red)")
+    user_prompt = build_user_prompt(sim, target_desc="the red cube (cube_red)")
 
     print("=== SYSTEM PROMPT ===")
     print(system_prompt)

@@ -5,6 +5,7 @@
     "target_type": "cube_red",
     "target_object_name": "cube_red",
     "instruction_vi": "Gắp khối lập phương màu đỏ (cube_red) rồi thả vào giỏ.",
+    "instruction_en": "Grasp the red cube (cube_red) and drop it into the basket.",
     "max_steps": 20,
     "objects": [
       {
@@ -95,6 +96,7 @@
     "target_type": "cyl_green",
     "target_object_name": "cyl_green",
     "instruction_vi": "Gắp khối trụ màu xanh lá (cyl_green) rồi thả vào giỏ.",
+    "instruction_en": "Grasp the green cylinder (cyl_green) and drop it into the basket.",
     "max_steps": 20,
     "objects": [
       {
@@ -185,6 +187,7 @@
     "target_type": "sphere_blue",
     "target_object_name": "sphere_blue",
     "instruction_vi": "Gắp quả cầu màu xanh dương (sphere_blue) rồi thả vào giỏ.",
+    "instruction_en": "Grasp the blue sphere (sphere_blue) and drop it into the basket.",
     "max_steps": 20,
     "objects": [
       {
@@ -275,6 +278,7 @@
     "target_type": "cube_red",
     "target_object_name": "cube_red",
     "instruction_vi": "Gắp khối lập phương màu đỏ (cube_red) rồi thả vào giỏ.",
+    "instruction_en": "Grasp the red cube (cube_red) and drop it into the basket.",
     "max_steps": 20,
     "objects": [
       {
@@ -345,6 +349,7 @@
     "target_type": "cyl_green",
     "target_object_name": "cyl_green",
     "instruction_vi": "Gắp khối trụ màu xanh lá (cyl_green) rồi thả vào giỏ.",
+    "instruction_en": "Grasp the green cylinder (cyl_green) and drop it into the basket.",
     "max_steps": 20,
     "objects": [
       {
@@ -415,6 +420,7 @@
     "target_type": "sphere_blue",
     "target_object_name": "sphere_blue",
     "instruction_vi": "Gắp quả cầu màu xanh dương (sphere_blue) rồi thả vào giỏ.",
+    "instruction_en": "Grasp the blue sphere (sphere_blue) and drop it into the basket.",
     "max_steps": 20,
     "objects": [
       {
@@ -485,6 +491,7 @@
     "target_type": "cube_red",
     "target_object_name": "cube_red",
     "instruction_vi": "Gắp khối lập phương màu đỏ (cube_red) rồi thả vào giỏ.",
+    "instruction_en": "Grasp the red cube (cube_red) and drop it into the basket.",
     "max_steps": 20,
     "objects": [
       {
@@ -595,6 +602,7 @@
     "target_type": "cyl_green",
     "target_object_name": "cyl_green",
     "instruction_vi": "Gắp khối trụ màu xanh lá (cyl_green) rồi thả vào giỏ.",
+    "instruction_en": "Grasp the green cylinder (cyl_green) and drop it into the basket.",
     "max_steps": 20,
     "objects": [
       {
@@ -705,6 +713,7 @@
     "target_type": "sphere_blue",
     "target_object_name": "sphere_blue",
     "instruction_vi": "Gắp quả cầu màu xanh dương (sphere_blue) rồi thả vào giỏ.",
+    "instruction_en": "Grasp the blue sphere (sphere_blue) and drop it into the basket.",
     "max_steps": 20,
     "objects": [
       {
@@ -815,6 +824,7 @@
     "target_type": "cube_red",
     "target_object_name": "cube_red",
     "instruction_vi": "Gắp khối lập phương màu đỏ (cube_red) rồi thả vào giỏ.",
+    "instruction_en": "Grasp the red cube (cube_red) and drop it into the basket.",
     "max_steps": 20,
     "objects": [
       {
@@ -927,6 +937,7 @@
     "target_type": "cyl_green",
     "target_object_name": "cyl_green",
     "instruction_vi": "Gắp khối trụ màu xanh lá (cyl_green) rồi thả vào giỏ.",
+    "instruction_en": "Grasp the green cylinder (cyl_green) and drop it into the basket.",
     "max_steps": 20,
     "objects": [
       {
@@ -1039,6 +1050,7 @@
     "target_type": "sphere_blue",
     "target_object_name": "sphere_blue",
     "instruction_vi": "Gắp quả cầu màu xanh dương (sphere_blue) rồi thả vào giỏ.",
+    "instruction_en": "Grasp the blue sphere (sphere_blue) and drop it into the basket.",
     "max_steps": 20,
     "objects": [
       {
@@ -1151,6 +1163,7 @@
     "target_type": "cube_red",
     "target_object_name": "cube_red",
     "instruction_vi": "Gắp khối lập phương màu đỏ (cube_red) rồi thả vào giỏ.",
+    "instruction_en": "Grasp the red cube (cube_red) and drop it into the basket.",
     "max_steps": 20,
     "objects": [
       {
@@ -1221,6 +1234,7 @@
     "target_type": "cyl_green",
     "target_object_name": "cyl_green",
     "instruction_vi": "Gắp khối trụ màu xanh lá (cyl_green) rồi thả vào giỏ.",
+    "instruction_en": "Grasp the green cylinder (cyl_green) and drop it into the basket.",
     "max_steps": 20,
     "objects": [
       {
@@ -1291,6 +1305,7 @@
     "target_type": "sphere_blue",
     "target_object_name": "sphere_blue",
     "instruction_vi": "Gắp quả cầu màu xanh dương (sphere_blue) rồi thả vào giỏ.",
+    "instruction_en": "Grasp the blue sphere (sphere_blue) and drop it into the basket.",
     "max_steps": 20,
     "objects": [
       {

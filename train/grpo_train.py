@@ -99,7 +99,7 @@ def _extract_text(completion) -> str:
     return str(completion)
 
 
-def build_reward_func(manager):
+def build_reward_func(manager, metrics=None):
     """Tạo reward function cho trl, đóng quanh EpisodeManager.
 
     trl gọi: reward_func(prompts, completions, **kwargs). kwargs chứa các cột
@@ -107,6 +107,9 @@ def build_reward_func(manager):
     episode_id (mỗi episode = 1 nhóm G completion liền nhau trong batch), chấm
     bằng manager.score_and_advance (đã commit winner để advance môi trường), rồi
     trả reward phẳng đúng thứ tự đầu vào.
+
+    Nếu truyền ``metrics`` (MetricsLogger), mỗi step được ghi 1 dòng JSONL để
+    trực quan hoá bằng train/plot_metrics.py.
     """
     def env_reward_func(prompts=None, completions=None, episode_id=None, **kwargs):
         n = len(completions)
@@ -123,11 +126,23 @@ def build_reward_func(manager):
             res = manager.score_and_advance(eid, comp)
             for local, gi in enumerate(idxs):
                 rewards[gi] = res.rewards[local]
+            info = res.info
+            # Ghi metric (JSONL) để vẽ biểu đồ tiến trình.
+            if metrics is not None:
+                metrics.log_step(
+                    episode_id=eid, level_id=info["level_id"],
+                    step_idx=info["step_idx"], group_size=len(idxs),
+                    n_valid=info["n_valid"], rewards=res.rewards,
+                    geometric_rewards=res.geometric_rewards,
+                    format_rewards=res.format_rewards,
+                    winner_idx=res.winner_idx, finished=res.finished,
+                    success=info.get("success", False),
+                    winner_measure=info.get("winner_measure"))
             # Log gọn (xuất hiện trong stdout; có thể đẩy sang trackio/wandb).
-            print(f"[reward] {eid} lvl={res.info['level_id']} "
-                  f"step={res.info['step_idx']} n_valid={res.info['n_valid']} "
+            print(f"[reward] {eid} lvl={info['level_id']} "
+                  f"step={info['step_idx']} n_valid={info['n_valid']} "
                   f"r={[round(x, 3) for x in res.rewards]} "
-                  f"finished={res.finished}")
+                  f"finished={res.finished} success={info.get('success', False)}")
         return rewards
 
     env_reward_func.__name__ = "env_reward"
@@ -221,11 +236,25 @@ def main():
     p.add_argument("--log-completions", action="store_true",
                    help="In BẢNG prompt+completion đầy đủ mỗi step (RẤT DÀI vì "
                         "prompt to). Mặc định TẮT để log gọn.")
+    p.add_argument("--metrics-file", default=None,
+                   help="File JSONL ghi metric mỗi step để vẽ biểu đồ "
+                        "(mặc định logs/metrics_<timestamp>.jsonl).")
+    p.add_argument("--report-to", default="none",
+                   help="Backend cho metric trl tích hợp (loss/reward/KL): "
+                        "'none' | 'tensorboard' | 'wandb' | 'trackio'.")
     args = p.parse_args()
 
     # Chuyển hướng stdout/stderr ra file log (vẫn hiện trên terminal).
     log_path = _setup_logfile(args.log_file)
     print(f"[grpo_train] ghi log vào: {log_path}")
+
+    # File metric JSONL (mặc định cạnh log, cùng timestamp).
+    from train.metrics_logger import MetricsLogger
+    metrics_path = args.metrics_file or str(
+        ROOT / "logs" / f"metrics_{datetime.now():%Y%m%d_%H%M%S}.jsonl")
+    metrics = MetricsLogger(metrics_path)
+    print(f"[grpo_train] ghi metric vào: {metrics_path} "
+          f"(vẽ biểu đồ: python -m train.plot_metrics {metrics_path})")
 
     # Import nặng đặt trong main để Mac không cần cài torch/trl.
     from trl import GRPOConfig, GRPOTrainer
@@ -242,7 +271,7 @@ def main():
         img_w=args.img_w, img_h=args.img_h,
         timeout=args.game_timeout)
 
-    reward_func = build_reward_func(manager)
+    reward_func = build_reward_func(manager, metrics=metrics)
     dataset = make_dataset(manager, args.total_samples)
 
     # Ràng buộc trl GRPO: per_device_train_batch_size đếm theo COMPLETION.
@@ -281,6 +310,7 @@ def main():
         remove_unused_columns=False, # GIỮ cột episode_id cho reward func
         dataloader_num_workers=0,    # giữ thứ tự lấy mẫu xác định (không prefetch)
         shuffle_dataset=False,
+        report_to=([] if args.report_to == "none" else [args.report_to]),
     )
     config = _build_config(GRPOConfig, want)
 
@@ -312,6 +342,7 @@ def main():
         trainer.train()
     finally:
         manager.close()
+        metrics.close()
 
 
 if __name__ == "__main__":

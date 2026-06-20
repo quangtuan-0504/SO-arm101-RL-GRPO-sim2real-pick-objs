@@ -114,7 +114,8 @@ class EpisodeManager:
 
     def target_desc(self, eid: str) -> str:
         lv = self._episodes[eid].level
-        return lv.get("instruction_vi", lv["target_object_name"])
+        return lv.get("instruction_en",
+                      lv.get("instruction_vi", lv["target_object_name"]))
 
     def current_prompt(self, eid: str) -> list:
         ep = self._episodes[eid]
@@ -159,12 +160,13 @@ class EpisodeManager:
         total = [fmt[i] + geo[i] for i in range(len(completions))]
 
         # 4) chọn winner + commit (advance)
-        winner_idx, advanced, finished = None, False, False
+        winner_idx, advanced, finished, success = None, False, False, False
         if valid_idx:
             winner_idx = max(valid_idx, key=lambda i: geo[i])
             next_obs = ep.env.commit(branch_of[winner_idx].branch_id)
             ep.obs = next_obs
             advanced = True
+            success = bool(next_obs.done)          # vật đã vào giỏ
             if next_obs.done or next_obs.step_idx >= next_obs.max_steps:
                 finished = True
         else:
@@ -176,7 +178,10 @@ class EpisodeManager:
             valid_mask=valid_mask, winner_idx=winner_idx, advanced=advanced,
             finished=finished,
             info={"level_id": ep.level["level_id"], "step_idx": obs.step_idx,
-                  "n_valid": len(valid_idx), "done": ep.obs.done})
+                  "n_valid": len(valid_idx), "done": ep.obs.done,
+                  "success": success, "max_steps": obs.max_steps,
+                  # số đo trạng thái SAU khi commit winner (None nếu không advance)
+                  "winner_measure": (dict(ep.obs.measure) if advanced else None)})
 
         if finished:
             self._reset_episode(eid)
