@@ -1,0 +1,10 @@
+# Command run
+# conda create -n t python=3.12 -y
+# conda activate t
+# pip install   "transformers>=4.56.2,<5"   "trl==1.6.0"   "vllm==0.19.0"
+# pip install peft
+
+transformers == 4.57.6
+trl==1.6.0
+vllm==0.19.0
+peft == 0.19.1

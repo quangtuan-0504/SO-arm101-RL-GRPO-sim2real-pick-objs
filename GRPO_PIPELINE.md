@@ -60,7 +60,7 @@ caffeinate -dimsu ./.venv/bin/python -m game.service --port 8200
 Cho server GPU truy cập qua SSH reverse tunnel. CHẠY LỆNH TRÊN MAC, SSH RA
 server GPU (KHÔNG ssh vào Mac). Dùng host+port mà Vast AI cấp ở nút "Connect":
 ```bash
-# trên MAC: đẩy ngược cổng 8200 của Mac sang 127.0.0.1:8200 của server GPU
+# trên MAC: đẩy ngược cổng 8200 của Mac sang 127.0.0.1:8200 của server GPU, Mở terminal ngoài chạy.
 ssh -N -R 8200:localhost:8200 -p <VAST_PORT> root@<VAST_HOST>
 # ví dụ (Direct): ssh -N -R 8200:localhost:8200 -p 41875 root@79.116.54.219
 ```
@@ -74,11 +74,12 @@ Kiểm tra trên server GPU: `curl http://127.0.0.1:8200/health`
 
 ### 3. Huấn luyện GRPO (server GPU) — CHƯA chạy được trên Mac
 ```bash
-pip install "trl>=0.27" "transformers>=4.56" accelerate "vllm>=0.11" pillow
+pip install -r ./train/training_requirements.txt
 python -m train.grpo_train \
-    --model Qwen/Qwen2.5-VL-3B-Instruct \
+    --model Qwen/Qwen3-VL-2B-Instruct \
     --game-url http://127.0.0.1:8200 \
-    --n-parallel 2 --group-size 4 --use-vllm
+    --n-parallel 1 --group-size 2 --use-vllm \
+    --vllm-gpu-util 0.45 --max-model-len 4096 --img-w 256 --img-h 192
 ```
 
 ## Ánh xạ vào GRPO (single-step, "Cách A")
