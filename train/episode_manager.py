@@ -49,7 +49,8 @@ class EpisodeManager:
                  *, n_parallel: int = 2, group_size: int = 4,
                  geo_weights: GeoWeights | None = None,
                  format_weight: float = 1.0, img_w: int = 480, img_h: int = 360,
-                 timeout: float = 180.0, seed: int = 0):
+                 timeout: float = 180.0, seed: int = 0,
+                 attach_images: bool = False):
         self.base_url = base_url
         self.levels = levels
         self.joints = joints_spec
@@ -58,6 +59,7 @@ class EpisodeManager:
         self.format_weight = format_weight
         self.img_w, self.img_h = img_w, img_h
         self.timeout = timeout
+        self.attach_images = attach_images  # đính ảnh winner vào info để lưu đĩa
         self.rng = random.Random(seed)
         self._episodes: dict[str, _Episode] = {}
         self._order: list[str] = []
@@ -182,6 +184,12 @@ class EpisodeManager:
                   "success": success, "max_steps": obs.max_steps,
                   # số đo trạng thái SAU khi commit winner (None nếu không advance)
                   "winner_measure": (dict(ep.obs.measure) if advanced else None)})
+
+        # Đính ảnh trạng thái winner (nếu bật) — phải lấy TRƯỚC khi reset episode.
+        # ep.obs = trạng thái sau commit nếu advanced, ngược lại là khung đang kẹt.
+        if self.attach_images:
+            result.info["images"] = {"wrist": ep.obs.wrist_image,
+                                     "stand": ep.obs.stand_image}
 
         if finished:
             self._reset_episode(eid)

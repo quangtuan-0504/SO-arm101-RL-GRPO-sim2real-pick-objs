@@ -245,8 +245,8 @@ def build_client(args, sim_for_mock):
 def main():
     p = argparse.ArgumentParser(description="Vong lap dieu khien SO-101 bang VLM")
     p.add_argument("--config", default=str(ROOT / "config.yaml"))
-    p.add_argument("--target", default="khoi lap phuong mau do (cube_red)",
-                   help="Mo ta vat the can gap")
+    p.add_argument("--target", default="the red cube (cube_red)",
+                   help="Description of the object to grasp")
     p.add_argument("--max-steps", type=int, default=12,
                    help="So lan inference toi da. Voi --view, dat 0 = khong gioi han")
     p.add_argument("--settle-seconds", type=float, default=0.6)

@@ -99,7 +99,7 @@ def _extract_text(completion) -> str:
     return str(completion)
 
 
-def build_reward_func(manager, metrics=None):
+def build_reward_func(manager, metrics=None, frame_saver=None):
     """Tạo reward function cho trl, đóng quanh EpisodeManager.
 
     trl gọi: reward_func(prompts, completions, **kwargs). kwargs chứa các cột
@@ -110,6 +110,8 @@ def build_reward_func(manager, metrics=None):
 
     Nếu truyền ``metrics`` (MetricsLogger), mỗi step được ghi 1 dòng JSONL để
     trực quan hoá bằng train/plot_metrics.py.
+    Nếu truyền ``frame_saver`` (FrameSaver), ảnh winner được lưu đĩa theo lấy mẫu
+    (mỗi N step + cuối episode) để theo dõi hành vi cánh tay.
     """
     def env_reward_func(prompts=None, completions=None, episode_id=None, **kwargs):
         n = len(completions)
@@ -138,6 +140,20 @@ def build_reward_func(manager, metrics=None):
                     winner_idx=res.winner_idx, finished=res.finished,
                     success=info.get("success", False),
                     winner_measure=info.get("winner_measure"))
+            # Lưu ảnh winner theo lấy mẫu (mỗi N step + cuối episode).
+            imgs = info.get("images")
+            if (frame_saver is not None and imgs is not None
+                    and frame_saver.should_save(info["step_idx"], res.finished)):
+                wm = info.get("winner_measure") or {}
+                wr = (res.rewards[res.winner_idx]
+                      if res.winner_idx is not None else None)
+                frame_saver.save(
+                    episode_id=eid, level_id=info["level_id"],
+                    step_idx=info["step_idx"], wrist_b64=imgs["wrist"],
+                    stand_b64=imgs["stand"], finished=res.finished,
+                    success=info.get("success", False),
+                    meta={"winner_reward": wr, "grasped": wm.get("grasped"),
+                          "in_basket": wm.get("in_basket")})
             # Log gọn (xuất hiện trong stdout; có thể đẩy sang trackio/wandb).
             print(f"[reward] {eid} lvl={info['level_id']} "
                   f"step={info['step_idx']} n_valid={info['n_valid']} "
@@ -242,6 +258,13 @@ def main():
     p.add_argument("--report-to", default="none",
                    help="Backend cho metric trl tích hợp (loss/reward/KL): "
                         "'none' | 'tensorboard' | 'wandb' | 'trackio'.")
+    p.add_argument("--save-images", action="store_true",
+                   help="Lưu ảnh winner ra đĩa theo lấy mẫu để theo dõi hành vi "
+                        "cánh tay. Mặc định TẮT (tiết kiệm đĩa).")
+    p.add_argument("--save-img-every", type=int, default=25,
+                   help="Lưu ảnh winner mỗi N step (luôn lưu thêm ở cuối episode).")
+    p.add_argument("--frames-dir", default=None,
+                   help="Thư mục lưu ảnh (mặc định logs/frames_<timestamp>/).")
     args = p.parse_args()
 
     # Chuyển hướng stdout/stderr ra file log (vẫn hiện trên terminal).
@@ -256,6 +279,16 @@ def main():
     print(f"[grpo_train] ghi metric vào: {metrics_path} "
           f"(vẽ biểu đồ: python -m train.plot_metrics {metrics_path})")
 
+    # Bộ lưu ảnh winner (tuỳ chọn).
+    frame_saver = None
+    if args.save_images:
+        from train.frame_saver import FrameSaver
+        frames_dir = args.frames_dir or str(
+            ROOT / "logs" / f"frames_{datetime.now():%Y%m%d_%H%M%S}")
+        frame_saver = FrameSaver(frames_dir, every=args.save_img_every)
+        print(f"[grpo_train] lưu ảnh winner vào: {frames_dir} "
+              f"(mỗi {args.save_img_every} step + cuối episode)")
+
     # Import nặng đặt trong main để Mac không cần cài torch/trl.
     from trl import GRPOConfig, GRPOTrainer
     from train.episode_manager import EpisodeManager
@@ -269,9 +302,11 @@ def main():
         args.game_url, levels, joints,
         n_parallel=args.n_parallel, group_size=args.group_size,
         img_w=args.img_w, img_h=args.img_h,
-        timeout=args.game_timeout)
+        timeout=args.game_timeout,
+        attach_images=args.save_images)
 
-    reward_func = build_reward_func(manager, metrics=metrics)
+    reward_func = build_reward_func(manager, metrics=metrics,
+                                    frame_saver=frame_saver)
     dataset = make_dataset(manager, args.total_samples)
 
     # Ràng buộc trl GRPO: per_device_train_batch_size đếm theo COMPLETION.
