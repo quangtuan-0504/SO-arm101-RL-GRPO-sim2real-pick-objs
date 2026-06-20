@@ -38,10 +38,52 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 from collections import OrderedDict
+from datetime import datetime
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+
+
+class _Tee:
+    """Ghi đồng thời ra terminal và file log (để theo dõi + lưu lại).
+
+    Bọc quanh sys.stdout/sys.stderr: mọi thứ in ra màn hình vẫn hiện như cũ,
+    đồng thời được chép vào file log để xem lại sau khi chạy xong.
+    """
+
+    def __init__(self, stream, log_fp):
+        self._stream = stream
+        self._log = log_fp
+
+    def write(self, data):
+        self._stream.write(data)
+        self._log.write(data)
+        self._log.flush()
+
+    def flush(self):
+        self._stream.flush()
+        self._log.flush()
+
+    def __getattr__(self, name):  # ủy quyền isatty()/encoding... cho stream gốc
+        return getattr(self._stream, name)
+
+
+def _setup_logfile(log_file: str | None) -> str:
+    """Mở file log và chuyển hướng stdout/stderr qua _Tee. Trả về đường dẫn."""
+    if log_file is None:
+        log_dir = ROOT / "logs"
+        log_dir.mkdir(exist_ok=True)
+        log_file = str(log_dir / f"grpo_{datetime.now():%Y%m%d_%H%M%S}.log")
+    else:
+        Path(log_file).parent.mkdir(parents=True, exist_ok=True)
+
+    fp = open(log_file, "a", encoding="utf-8", buffering=1)
+    fp.write(f"\n===== GRPO run @ {datetime.now():%Y-%m-%d %H:%M:%S} =====\n")
+    sys.stdout = _Tee(sys.stdout, fp)
+    sys.stderr = _Tee(sys.stderr, fp)
+    return log_file
 
 
 def _extract_text(completion) -> str:
@@ -172,7 +214,18 @@ def main():
     p.add_argument("--img-w", type=int, default=384,
                    help="Bề rộng ảnh game render (nhỏ hơn -> ít token thị giác/VRAM)")
     p.add_argument("--img-h", type=int, default=288)
+    # --- Log ---
+    p.add_argument("--log-file", default=None,
+                   help="File ghi log (mặc định logs/grpo_<timestamp>.log). "
+                        "Toàn bộ output terminal được chép vào đây để xem lại.")
+    p.add_argument("--log-completions", action="store_true",
+                   help="In BẢNG prompt+completion đầy đủ mỗi step (RẤT DÀI vì "
+                        "prompt to). Mặc định TẮT để log gọn.")
     args = p.parse_args()
+
+    # Chuyển hướng stdout/stderr ra file log (vẫn hiện trên terminal).
+    log_path = _setup_logfile(args.log_file)
+    print(f"[grpo_train] ghi log vào: {log_path}")
 
     # Import nặng đặt trong main để Mac không cần cài torch/trl.
     from trl import GRPOConfig, GRPOTrainer
@@ -221,7 +274,8 @@ def main():
         vllm_max_model_length=args.max_model_len,
         bf16=True,                   # nửa độ chính xác -> giảm VRAM
         gradient_checkpointing=not args.no_grad_checkpoint,
-        log_completions=True,
+        log_completions=args.log_completions,  # mặc định TẮT -> log gọn
+        num_completions_to_print=2,            # nếu bật, chỉ in 2 mẫu
         logging_steps=1,
         save_steps=200,
         remove_unused_columns=False, # GIỮ cột episode_id cho reward func
