@@ -93,38 +93,85 @@ def build_reward_func(manager):
 
 
 def make_dataset(manager, total_samples: int):
-    """IterableDataset động: round-robin các episode, lấy prompt step HIỆN TẠI.
+    """Dataset map-style + lazy transform: prompt build tại thời điểm TRUY CẬP.
 
-    Vì __iter__ đọc ``manager.current_prompt`` tại thời điểm lấy mẫu, prompt luôn
-    phản ánh trạng thái mới nhất (sau khi reward func đã advance ở batch trước).
+    trl GRPOTrainer không nhận IterableDataset, nên ta dùng datasets.Dataset
+    (Arrow) với ``with_transform``. Cột ``prompt`` chỉ là placeholder trong
+    Arrow; mỗi lần trl đọc một dòng, transform build prompt LIVE từ trạng thái
+    env hiện tại của episode (đã advance ở batch trước). Cột ``episode_id`` được
+    trl truyền vào reward function.
+
+    LƯU Ý: cách này dựa vào việc trl đọc dataset LƯỜI (lazy) lúc generate, KHÔNG
+    materialize/.map toàn bộ trước. Nếu phiên bản trl materialize dataset, prompt
+    sẽ bị "đóng băng" ở trạng thái ban đầu -> phải chuyển sang vòng lặp tuỳ biến
+    (xem train/custom_grpo.py).
     """
-    from datasets import IterableDataset
+    from datasets import Dataset
 
     eids = manager.episode_ids
+    n = len(eids)
+    episode_col = [eids[i % n] for i in range(total_samples)]
 
-    def gen():
-        produced = 0
-        while produced < total_samples:
-            for eid in eids:
-                yield {"prompt": manager.current_prompt(eid), "episode_id": eid}
-                produced += 1
-                if produced >= total_samples:
-                    break
+    ds = Dataset.from_dict({
+        "prompt": [""] * total_samples,      # placeholder; transform sẽ ghi đè
+        "episode_id": episode_col,
+    })
 
-    return IterableDataset.from_generator(gen)
+    def _live_transform(batch):
+        ids = batch["episode_id"]
+        return {
+            "prompt": [manager.current_prompt(eid) for eid in ids],
+            "episode_id": ids,
+        }
+
+    ds.set_transform(_live_transform)
+    return ds
+
+
+def _build_config(GRPOConfig, want: dict):
+    """Dựng GRPOConfig chỉ với các tham số phiên bản trl hiện tại HỖ TRỢ.
+
+    GRPOConfig là dataclass; các tham số đổi/biến mất giữa các phiên bản trl.
+    Lọc theo field thực có để tránh TypeError, in ra cái bị bỏ để bạn biết.
+    """
+    import dataclasses
+
+    valid = {f.name for f in dataclasses.fields(GRPOConfig)}
+    used = {k: v for k, v in want.items() if k in valid}
+    dropped = sorted(k for k in want if k not in valid)
+    if dropped:
+        print(f"[grpo_train] trl phiên bản này KHÔNG có các tham số sau, đã bỏ "
+              f"qua (dùng mặc định): {dropped}")
+    return GRPOConfig(**used)
 
 
 def main():
     p = argparse.ArgumentParser(description="GRPO train SO-101 VLM (GPU)")
     p.add_argument("--model", default="Qwen/Qwen2.5-VL-3B-Instruct")
     p.add_argument("--game-url", default=os.environ.get("GAME_URL",
-                                                        "http://127.0.0.1:8000"))
+                                                        "http://127.0.0.1:8200"))
     p.add_argument("--n-parallel", type=int, default=2)
     p.add_argument("--group-size", type=int, default=4)
     p.add_argument("--total-samples", type=int, default=2000)
     p.add_argument("--output-dir", default=str(ROOT / "checkpoints" / "grpo"))
     p.add_argument("--lr", type=float, default=1e-6)
     p.add_argument("--use-vllm", action="store_true")
+    p.add_argument("--game-timeout", type=float, default=180.0,
+                   help="Read timeout (giây) cho mỗi request tới game service")
+    # --- Tiết kiệm bộ nhớ GPU ---
+    p.add_argument("--no-lora", action="store_true",
+                   help="Tắt LoRA (full fine-tune, ngốn VRAM hơn nhiều)")
+    p.add_argument("--lora-r", type=int, default=16)
+    p.add_argument("--lora-alpha", type=int, default=32)
+    p.add_argument("--vllm-gpu-util", type=float, default=0.40,
+                   help="Tỉ lệ VRAM cho vLLM trong chế độ colocate (0..1)")
+    p.add_argument("--max-model-len", type=int, default=4096,
+                   help="Giới hạn ngữ cảnh vLLM (prompt+ảnh+completion) -> bớt KV cache")
+    p.add_argument("--no-grad-checkpoint", action="store_true",
+                   help="Tắt gradient checkpointing (nhanh hơn nhưng tốn VRAM)")
+    p.add_argument("--img-w", type=int, default=384,
+                   help="Bề rộng ảnh game render (nhỏ hơn -> ít token thị giác/VRAM)")
+    p.add_argument("--img-h", type=int, default=288)
     args = p.parse_args()
 
     # Import nặng đặt trong main để Mac không cần cài torch/trl.
@@ -138,15 +185,28 @@ def main():
 
     manager = EpisodeManager(
         args.game_url, levels, joints,
-        n_parallel=args.n_parallel, group_size=args.group_size)
+        n_parallel=args.n_parallel, group_size=args.group_size,
+        img_w=args.img_w, img_h=args.img_h,
+        timeout=args.game_timeout)
 
     reward_func = build_reward_func(manager)
     dataset = make_dataset(manager, args.total_samples)
 
-    # Ràng buộc: 1 batch = n_parallel prompt phân biệt, mỗi prompt G completion.
-    config = GRPOConfig(
+    # Ràng buộc trl GRPO: per_device_train_batch_size đếm theo COMPLETION.
+    #   generation_batch_size = per_device_train_batch_size * grad_accum * world
+    #   phải chia hết cho num_generations (G).
+    #   số prompt phân biệt mỗi vòng = generation_batch_size / G.
+    # Muốn n_parallel prompt phân biệt, mỗi prompt G completion (giả định 1 GPU,
+    # grad_accum=1) => per_device_train_batch_size = n_parallel * group_size.
+    per_device_bs = args.n_parallel * args.group_size
+    n_prompts = per_device_bs // args.group_size
+    print(f"[grpo_train] per_device_train_batch_size={per_device_bs} "
+          f"(=n_parallel*group_size), num_generations={args.group_size} "
+          f"=> {n_prompts} prompt phân biệt/vòng. (Giả định 1 GPU, grad_accum=1; "
+          f"nếu nhiều GPU/grad_accum, chỉnh lại để tích chia hết cho G.)")
+    want = dict(
         output_dir=args.output_dir,
-        per_device_train_batch_size=args.n_parallel,
+        per_device_train_batch_size=per_device_bs,
         gradient_accumulation_steps=1,
         num_generations=args.group_size,
         steps_per_generation=1,
@@ -157,18 +217,42 @@ def main():
         beta=0.0,                    # khởi đầu tắt KL cho đơn giản; bật sau nếu lệch
         use_vllm=args.use_vllm,
         vllm_mode="colocate" if args.use_vllm else None,
+        vllm_gpu_memory_utilization=args.vllm_gpu_util,
+        vllm_max_model_length=args.max_model_len,
+        bf16=True,                   # nửa độ chính xác -> giảm VRAM
+        gradient_checkpointing=not args.no_grad_checkpoint,
         log_completions=True,
         logging_steps=1,
         save_steps=200,
-        dataloader_num_workers=0,    # giữ thứ tự lấy mẫu xác định
+        remove_unused_columns=False, # GIỮ cột episode_id cho reward func
+        dataloader_num_workers=0,    # giữ thứ tự lấy mẫu xác định (không prefetch)
         shuffle_dataset=False,
     )
+    config = _build_config(GRPOConfig, want)
+
+    # LoRA: chỉ train vài % tham số -> optimizer states gần như biến mất,
+    # giải phóng VRAM cho bản vLLM + KV cache. Đây là cách giảm bộ nhớ hiệu quả
+    # nhất cho GPU 40GB với VLM 3B.
+    peft_config = None
+    if not args.no_lora:
+        from peft import LoraConfig
+        peft_config = LoraConfig(
+            r=args.lora_r, lora_alpha=args.lora_alpha, lora_dropout=0.05,
+            bias="none", task_type="CAUSAL_LM",
+            # Nhắm các lớp tuyến tính của khối ngôn ngữ Qwen (không đụng vision tower).
+            target_modules=["q_proj", "k_proj", "v_proj", "o_proj",
+                            "gate_proj", "up_proj", "down_proj"],
+        )
+        print(f"[grpo_train] LoRA bật: r={args.lora_r} alpha={args.lora_alpha}")
+    else:
+        print("[grpo_train] LoRA TẮT (full fine-tune).")
 
     trainer = GRPOTrainer(
         model=args.model,
         args=config,
         train_dataset=dataset,
         reward_funcs=[reward_func],
+        peft_config=peft_config,
     )
     try:
         trainer.train()

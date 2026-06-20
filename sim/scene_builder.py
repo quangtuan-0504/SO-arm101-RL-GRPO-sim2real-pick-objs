@@ -15,15 +15,7 @@ import mujoco
 ROOT = Path(__file__).resolve().parent.parent
 BASE_SCENE = ROOT / "models" / "so101" / "scene.xml"
 
-# Tên 6 khớp/cơ cấu chấp hành của SO-101 (theo đúng model gốc)
-JOINT_NAMES = [
-    "shoulder_pan",
-    "shoulder_lift",
-    "elbow_flex",
-    "wrist_flex",
-    "wrist_roll",
-    "gripper",
-]
+from .constants import JOINT_NAMES  # re-export (tương thích import cũ)
 
 # Điểm gắp (đầu kẹp) trong hệ toạ độ cục bộ của thân "gripper".
 # Lấy từ site "gripperframe" trong model gốc so101_new_calib.xml.

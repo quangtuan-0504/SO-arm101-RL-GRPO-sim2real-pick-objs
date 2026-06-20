@@ -48,9 +48,11 @@ class Branch:
 
 class EnvClient:
     def __init__(self, base_url: str = "http://127.0.0.1:8000",
-                 timeout: float = 60.0):
+                 timeout: float = 180.0, connect_timeout: float = 10.0):
         self.base_url = base_url.rstrip("/")
-        self.timeout = timeout
+        # (connect, read): connect nhanh để phát hiện tunnel hỏng; read dài vì
+        # /reset, /branch phải render (và truyền ảnh qua SSH tunnel).
+        self.timeout = (connect_timeout, timeout)
         self.session_id: str | None = None
 
     def _post(self, path: str, payload: dict) -> dict:
@@ -60,7 +62,8 @@ class EnvClient:
         return r.json()
 
     def health(self) -> dict:
-        return requests.get(f"{self.base_url}/health", timeout=self.timeout).json()
+        return requests.get(f"{self.base_url}/health",
+                            timeout=(self.timeout[0], 15.0)).json()
 
     def levels(self) -> list:
         return requests.get(f"{self.base_url}/levels", timeout=self.timeout).json()

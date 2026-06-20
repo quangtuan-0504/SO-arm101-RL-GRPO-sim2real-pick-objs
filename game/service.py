@@ -224,8 +224,17 @@ def close(req: CloseReq):
 
 
 def main():
+    import argparse
+    import os
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+
+    p = argparse.ArgumentParser(description="SO-101 game service")
+    p.add_argument("--host", default=os.environ.get("GAME_HOST", "0.0.0.0"))
+    p.add_argument("--port", type=int,
+                   default=int(os.environ.get("GAME_PORT", "8200")))
+    args = p.parse_args()
+    print(f"[game.service] lắng nghe http://{args.host}:{args.port}")
+    uvicorn.run(app, host=args.host, port=args.port)
 
 
 if __name__ == "__main__":

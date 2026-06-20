@@ -53,20 +53,31 @@ Tạo `dataset/levels.json` (15 level) + `dataset/robot_spec.json` (giới hạn
 
 ### 2. Chạy game service (Mac)
 ```bash
-./.venv/bin/python -m game.service        # cổng 8000
+# Cổng mặc định 8200 (TRÁNH 8000 vì VS Code/Kiro hay chiếm 127.0.0.1:8000).
+# caffeinate giữ Mac không ngủ -> tiến trình không bị đóng băng khi train lâu.
+caffeinate -dimsu ./.venv/bin/python -m game.service --port 8200
 ```
-Cho server GPU truy cập qua SSH reverse tunnel, ví dụ:
+Cho server GPU truy cập qua SSH reverse tunnel. CHẠY LỆNH TRÊN MAC, SSH RA
+server GPU (KHÔNG ssh vào Mac). Dùng host+port mà Vast AI cấp ở nút "Connect":
 ```bash
-# trên server GPU: mở 127.0.0.1:8000 trỏ về Mac
-ssh -R 8000:localhost:8000 user@<mac>     # hoặc ngược lại tuỳ chiều kết nối
+# trên MAC: đẩy ngược cổng 8200 của Mac sang 127.0.0.1:8200 của server GPU
+ssh -N -R 8200:localhost:8200 -p <VAST_PORT> root@<VAST_HOST>
+# ví dụ (Direct): ssh -N -R 8200:localhost:8200 -p 41875 root@79.116.54.219
 ```
+Kiểm tra trên server GPU: `curl http://127.0.0.1:8200/health`
+→ `{"status":"ok","n_levels":15,...}`.
+(Không cần bật Remote Login/sshd trên Mac — Mac là phía đi RA, không nhận vào.)
+
+> Vì sao KHÔNG dùng 8000: nếu cả VS Code/Kiro (gắn `127.0.0.1:8000`) và game
+> service (gắn `*:8000`) cùng nghe 8000, request tới `127.0.0.1:8000` lọt vào
+> VS Code và treo tới timeout. Dùng cổng riêng (8200) để tránh hẳn.
 
 ### 3. Huấn luyện GRPO (server GPU) — CHƯA chạy được trên Mac
 ```bash
 pip install "trl>=0.27" "transformers>=4.56" accelerate "vllm>=0.11" pillow
 python -m train.grpo_train \
     --model Qwen/Qwen2.5-VL-3B-Instruct \
-    --game-url http://127.0.0.1:8000 \
+    --game-url http://127.0.0.1:8200 \
     --n-parallel 2 --group-size 4 --use-vllm
 ```
 

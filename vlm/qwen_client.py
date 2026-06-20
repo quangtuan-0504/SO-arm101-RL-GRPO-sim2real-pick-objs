@@ -13,7 +13,7 @@ from __future__ import annotations
 import json
 import re
 
-from sim.scene_builder import JOINT_NAMES
+from sim.constants import JOINT_NAMES
 
 
 # ----------------------------------------------------------------------

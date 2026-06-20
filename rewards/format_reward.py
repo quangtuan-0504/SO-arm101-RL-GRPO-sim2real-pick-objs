@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from sim.scene_builder import JOINT_NAMES
+from sim.constants import JOINT_NAMES
 from vlm.qwen_client import parse_control_json
 
 VALID_PHASES = {"approach", "align", "grasp", "lift", "carry", "release"}

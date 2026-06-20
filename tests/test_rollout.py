@@ -15,7 +15,8 @@ from train.env_client import EnvClient
 from train.rollout import EpisodeRollout, MockPolicy
 from dataset.generator import load_levels
 
-BASE = "http://127.0.0.1:8000"
+import os
+BASE = os.environ.get("GAME_URL", "http://127.0.0.1:8200")
 
 
 def main():

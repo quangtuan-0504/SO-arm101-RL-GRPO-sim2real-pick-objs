@@ -6,7 +6,8 @@ from __future__ import annotations
 
 import requests
 
-BASE = "http://127.0.0.1:8000"
+import os
+BASE = os.environ.get("GAME_URL", "http://127.0.0.1:8200")
 
 
 def main():

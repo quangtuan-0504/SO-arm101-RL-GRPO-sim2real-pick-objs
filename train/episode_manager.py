@@ -49,7 +49,7 @@ class EpisodeManager:
                  *, n_parallel: int = 2, group_size: int = 4,
                  geo_weights: GeoWeights | None = None,
                  format_weight: float = 1.0, img_w: int = 480, img_h: int = 360,
-                 seed: int = 0):
+                 timeout: float = 180.0, seed: int = 0):
         self.base_url = base_url
         self.levels = levels
         self.joints = joints_spec
@@ -57,18 +57,42 @@ class EpisodeManager:
         self.geo_weights = geo_weights or GeoWeights()
         self.format_weight = format_weight
         self.img_w, self.img_h = img_w, img_h
+        self.timeout = timeout
         self.rng = random.Random(seed)
         self._episodes: dict[str, _Episode] = {}
         self._order: list[str] = []
+
+        # Health-check sớm: báo lỗi rõ ràng nếu tunnel/game service chưa sẵn sàng.
+        self._preflight()
+
         for i in range(n_parallel):
             self._spawn(f"ep{i}")
+
+    def _preflight(self):
+        probe = EnvClient(self.base_url, timeout=self.timeout)
+        try:
+            h = probe.health()
+        except Exception as e:
+            raise RuntimeError(
+                f"Không gọi được game service tại {self.base_url} ({e}).\n"
+                "Kiểm tra: (1) game service đang chạy trên Mac "
+                "('caffeinate -dimsu python -m game.service'); "
+                "(2) SSH reverse tunnel còn sống "
+                "('ssh -N -R 8000:localhost:8000 -p <port> root@<host>'); "
+                "(3) thử 'curl http://127.0.0.1:8000/health' trên server GPU."
+            ) from e
+        if h.get("n_levels", 0) <= 0:
+            raise RuntimeError(
+                "Game service chạy nhưng chưa có level. Chạy trên Mac: "
+                "'python -m dataset.generator --maps 5'.")
+        print(f"[EpisodeManager] game service OK: {h}")
 
     # ------------------------------------------------------------------
     def _pick_level(self) -> dict:
         return self.rng.choice(self.levels)
 
     def _spawn(self, eid: str):
-        env = EnvClient(self.base_url)
+        env = EnvClient(self.base_url, timeout=self.timeout)
         level = self._pick_level()
         obs = env.reset(level["level_id"], img_w=self.img_w, img_h=self.img_h)
         self._episodes[eid] = _Episode(env=env, level=level, obs=obs)

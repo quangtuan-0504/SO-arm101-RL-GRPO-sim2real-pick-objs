@@ -21,16 +21,10 @@ Cách dùng nhanh
     # messages -> đưa vào client OpenAI-compatible của Qwen-VL
 """
 from __future__ import annotations
-import os
-import sys
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__),'..')))
-import yaml
-from sim.simulation import Simulation
-
 
 import json
 
-from sim.scene_builder import JOINT_NAMES
+from sim.constants import JOINT_NAMES
 
 # Mô tả ý nghĩa + chiều dương của từng khớp (để VLM suy luận đúng hướng).
 JOINT_DESCRIPTIONS = {
@@ -244,6 +238,9 @@ def _assemble_messages(user_prompt: str, wrist_img_b64: str,
     ]
 
 if __name__ == "__main__":
+    # Import cục bộ: chỉ cần khi chạy thử trên Mac (có mujoco).
+    import yaml
+    from sim.simulation import Simulation
 
     cfg = yaml.safe_load(open("config.yaml"))
     sim = Simulation(cfg)
