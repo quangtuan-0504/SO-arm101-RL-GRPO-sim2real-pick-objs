@@ -75,11 +75,8 @@ Kiểm tra trên server GPU: `curl http://127.0.0.1:8200/health`
 ### 3. Huấn luyện GRPO (server GPU) — CHƯA chạy được trên Mac
 ```bash
 pip install -r ./train/training_requirements.txt
-python -m train.grpo_train \
-    --model Qwen/Qwen3-VL-2B-Instruct \
-    --game-url http://127.0.0.1:8200 \
-    --n-parallel 1 --group-size 2 --use-vllm \
-    --vllm-gpu-util 0.45 --max-model-len 4096 --img-w 256 --img-h 192
+# Tham khảo chat16
+python -m train.grpo_train   --model Qwen/Qwen3-VL-2B-Instruct   --game-url http://127.0.0.1:8200   --n-parallel 1 --group-size 8 --use-vllm   --vllm-gpu-util 0.45 --max-model-len 4096 --img-w 256 --img-h 192   --save-images --save-img-every 25
 ```
 
 ## Ánh xạ vào GRPO (single-step, "Cách A")

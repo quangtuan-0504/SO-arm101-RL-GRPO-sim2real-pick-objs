@@ -6,4 +6,5 @@ screenshots/
 vlm_runs/
 .env
 .env
+logs
 
