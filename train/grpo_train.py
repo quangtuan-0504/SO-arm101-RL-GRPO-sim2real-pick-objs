@@ -330,7 +330,9 @@ def main():
         learning_rate=args.lr,
         max_prompt_length=None,      # ảnh + prompt dài; để None tránh cắt
         max_completion_length=512,
-        temperature=1.0,
+        temperature=1.2,             # cao hơn 1.0 -> G completion đa dạng góc,
+                                     # GRPO mới có phương sai để học (tránh collapse)
+        top_p=0.95,
         beta=0.0,                    # khởi đầu tắt KL cho đơn giản; bật sau nếu lệch
         use_vllm=args.use_vllm,
         vllm_mode="colocate" if args.use_vllm else None,

@@ -50,13 +50,19 @@ class EpisodeManager:
                  geo_weights: GeoWeights | None = None,
                  format_weight: float = 1.0, img_w: int = 480, img_h: int = 360,
                  timeout: float = 180.0, seed: int = 0,
-                 attach_images: bool = False):
+                 attach_images: bool = False,
+                 stall_penalty: float = 0.5, stall_eps: float = 1e-2):
         self.base_url = base_url
         self.levels = levels
         self.joints = joints_spec
         self.group_size = group_size
         self.geo_weights = geo_weights or GeoWeights()
         self.format_weight = format_weight
+        # Anti-stall: phạt completion ra góc gần y hệt pose hiện tại (copy
+        # home/example/pose cũ -> tay không di chuyển). Tạo phương sai trong
+        # nhóm GRPO để gradient ưu tiên "đổi góc" hơn "đứng yên".
+        self.stall_penalty = stall_penalty
+        self.stall_eps = stall_eps
         self.img_w, self.img_h = img_w, img_h
         self.timeout = timeout
         self.attach_images = attach_images  # đính ảnh winner vào info để lưu đĩa
@@ -123,7 +129,8 @@ class EpisodeManager:
         ep = self._episodes[eid]
         return build_messages_from_spec(
             self.joints, self.target_desc(eid),
-            ep.obs.wrist_image, ep.obs.stand_image)
+            ep.obs.wrist_image, ep.obs.stand_image,
+            current_angles=ep.obs.ctrl_angles)
 
     def current_level_id(self, eid: str) -> str:
         return self._episodes[eid].level["level_id"]
@@ -161,7 +168,18 @@ class EpisodeManager:
 
         total = [fmt[i] + geo[i] for i in range(len(completions))]
 
-        # 4) chọn winner + commit (advance)
+        # 3b) anti-stall: phạt completion ra góc ~ y hệt pose hiện tại.
+        # Tạo phương sai trong nhóm GRPO -> gradient đẩy model RA KHỎI việc copy
+        # home/example/pose cũ (nguyên nhân tay không di chuyển).
+        cur = obs.ctrl_angles or {}
+        n_stalled = 0
+        for i in valid_idx:
+            ang = angles_list[i] or {}
+            deltas = [abs(float(ang[n]) - float(cur.get(n, 0.0)))
+                      for n in ang if n != "gripper" and n in cur]
+            if deltas and max(deltas) < self.stall_eps:
+                total[i] -= self.stall_penalty
+                n_stalled += 1
         winner_idx, advanced, finished, success = None, False, False, False
         if valid_idx:
             winner_idx = max(valid_idx, key=lambda i: geo[i])
@@ -181,6 +199,7 @@ class EpisodeManager:
             finished=finished,
             info={"level_id": ep.level["level_id"], "step_idx": obs.step_idx,
                   "n_valid": len(valid_idx), "done": ep.obs.done,
+                  "n_stalled": n_stalled,
                   "success": success, "max_steps": obs.max_steps,
                   # số đo trạng thái SAU khi commit winner (None nếu không advance)
                   "winner_measure": (dict(ep.obs.measure) if advanced else None)})

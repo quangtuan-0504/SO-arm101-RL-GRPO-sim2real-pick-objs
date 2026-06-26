@@ -22,7 +22,9 @@ Quick start
     # messages -> feed into the OpenAI-compatible Qwen-VL client
 """
 from __future__ import annotations
-
+import os
+import sys
+sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__),'..')))
 import json
 
 from sim.constants import JOINT_NAMES
@@ -63,8 +65,22 @@ def _joint_table_from_spec(joints: list) -> str:
 
 
 def _output_schema_example_from_spec(joints: list) -> str:
-    """A valid example JSON output, using the home pose from the spec."""
-    angles = {j["name"]: round(float(j["home"]), 3) for j in joints}
+    """A FORMAT-ONLY example JSON output.
+
+    IMPORTANT: the angle values here are deliberately NOT the home pose and NOT
+    a real solution. They are placeholder numbers whose only job is to show the
+    JSON shape. The model must never copy them — it must compute its own angles
+    from the images. Using the home pose here caused the model to copy it
+    verbatim and never move the arm.
+    """
+    # Placeholder angles: midpoint between home and the upper limit, rounded
+    # oddly, so they look clearly "made up" and differ per joint. They are NOT a
+    # valid action — only an illustration of the field shape.
+    angles = {}
+    for j in joints:
+        lo, hi, home = float(j["lo"]), float(j["hi"]), float(j["home"])
+        placeholder = home + 0.137 * (hi - home if hi > home else home - lo)
+        angles[j["name"]] = round(placeholder, 3)
     example = {
         "reasoning": "A brief description of where the object and the basket "
                      "are in the 2 images, where the gripper is relative to "
@@ -77,6 +93,28 @@ def _output_schema_example_from_spec(joints: list) -> str:
         "confidence": 0.0,
     }
     return json.dumps(example, ensure_ascii=False, indent=2)
+
+
+def _current_pose_block(current_angles: dict | None) -> list[str]:
+    """Lines showing the CURRENT target angle of each joint (the real anchor)."""
+    if not current_angles:
+        return []
+    rows = ["| Joint name | Current angle (rad) |",
+            "|------------|---------------------|"]
+    for name in JOINT_NAMES:
+        if name in current_angles:
+            rows.append(f"| `{name}` | {float(current_angles[name]):.3f} |")
+    return [
+        "# CURRENT ARM POSE (where the joints are RIGHT NOW)",
+        "These are the joint angles the arm is currently holding. Your output "
+        "is the NEXT absolute target. To make the arm move you MUST output "
+        "angles that DIFFER from these. Returning these same numbers (or the "
+        "home pose, or the example values) keeps the arm frozen and makes no "
+        "progress.",
+        "",
+        "\n".join(rows),
+        "",
+    ]
 
 
 def _joint_table(sim) -> str:
@@ -126,10 +164,16 @@ def build_system_prompt() -> str:
         "the correct basket.",
         "6. The ONLY output is a single valid JSON object, with no other text, "
         "no markdown, no ``` blocks.",
+        "7. You MUST actually move the arm: the `joint_angles_rad` you output is "
+        "the NEXT target pose and MUST DIFFER from the current pose. Never copy "
+        "the home pose or the values from the format example — those are "
+        "references only. Outputting the current/home angles freezes the arm "
+        "and is wrong; compute fresh angles from the images that advance the "
+        "task. Only `gripper` may stay the same while a grasp is held.",
     ])
 
 
-def build_user_prompt(sim, target_desc: str) -> str:
+def build_user_prompt(sim, target_desc: str, current_angles: dict | None = None) -> str:
     """User prompt: concrete goal + mechanism description + output format (from sim)."""
     home = sim.config.get("arm", {}).get("home_pose", {})
     joints = []
@@ -137,10 +181,11 @@ def build_user_prompt(sim, target_desc: str) -> str:
         lo, hi = sim.get_ctrl_range(name)
         joints.append({"name": name, "lo": lo, "hi": hi,
                        "home": float(home.get(name, 0.0))})
-    return build_user_prompt_from_spec(joints, target_desc)
+    return build_user_prompt_from_spec(joints, target_desc, current_angles)
 
 
-def build_user_prompt_from_spec(joints: list, target_desc: str) -> str:
+def build_user_prompt_from_spec(joints: list, target_desc: str,
+                                current_angles: dict | None = None) -> str:
     """User prompt from a static joint spec list [{name,lo,hi,home}] (no sim needed)."""
     joints_csv = ", ".join(f'"{j["name"]}"' for j in joints)
     return "\n".join([
@@ -149,6 +194,7 @@ def build_user_prompt_from_spec(joints: list, target_desc: str) -> str:
         "it INTO THE BASKET. The task is complete once the object rests inside "
         "the basket.",
         "",
+        *_current_pose_block(current_angles),
         "# TWO-CAMERA CONTEXT",
         "You receive 2 images in this order:",
         "- Image 1 — WRIST CAMERA (wrist_cam): rigidly mounted on the gripper, "
@@ -208,7 +254,8 @@ def build_user_prompt_from_spec(joints: list, target_desc: str) -> str:
         "rests inside the basket.",
         '- "confidence": (float 0..1) the level of certainty.',
         "",
-        "Example of a valid output:",
+        "Example of the JSON SHAPE ONLY (the numbers below are placeholders — "
+        "DO NOT copy them, compute your own angles from the images):",
         _output_schema_example_from_spec(joints),
         "",
         "Now analyze the 2 images and output the control JSON for the next "
@@ -217,24 +264,30 @@ def build_user_prompt_from_spec(joints: list, target_desc: str) -> str:
 
 
 def build_messages(sim, target_desc: str,
-                   wrist_img_b64: str, stand_img_b64: str) -> list:
+                   wrist_img_b64: str, stand_img_b64: str,
+                   current_angles: dict | None = None) -> list:
     """Build OpenAI-compatible (Qwen-VL) messages with 2 images + prompt.
 
     ``wrist_img_b64`` / ``stand_img_b64`` are data URLs, e.g.:
     ``"data:image/png;base64,<...>"``.
     """
-    return _assemble_messages(build_user_prompt(sim, target_desc),
-                              wrist_img_b64, stand_img_b64)
+    return _assemble_messages(
+        build_user_prompt(sim, target_desc, current_angles),
+        wrist_img_b64, stand_img_b64)
 
 
 def build_messages_from_spec(joints: list, target_desc: str,
-                             wrist_img_b64: str, stand_img_b64: str) -> list:
+                             wrist_img_b64: str, stand_img_b64: str,
+                             current_angles: dict | None = None) -> list:
     """Like ``build_messages`` but uses a static joint spec (for the GPU server).
 
     ``joints`` = [{name, lo, hi, home}] (read from ``dataset/robot_spec.json``).
+    ``current_angles`` = {joint_name: rad} the arm's CURRENT target pose, shown
+    to the model as the anchor it must move away from.
     """
-    return _assemble_messages(build_user_prompt_from_spec(joints, target_desc),
-                              wrist_img_b64, stand_img_b64)
+    return _assemble_messages(
+        build_user_prompt_from_spec(joints, target_desc, current_angles),
+        wrist_img_b64, stand_img_b64)
 
 
 def _assemble_messages(user_prompt: str, wrist_img_b64: str,
