@@ -78,6 +78,7 @@ pip install -r ./train/training_requirements.txt
 # Tham khảo chat16
 python -m train.grpo_train   --model Qwen/Qwen3-VL-2B-Instruct   --game-url http://127.0.0.1:8200   --n-parallel 1 --group-size 8 --use-vllm   --vllm-gpu-util 0.45 --max-model-len 4096 --img-w 256 --img-h 192   --save-images --save-img-every 25
 ```
+Qwen/Qwen2.5-VL-3B-Instruct
 
 ## Ánh xạ vào GRPO (single-step, "Cách A")
 - 1 **prompt** = 2 ảnh trạng thái i + instruction + bảng khớp.
