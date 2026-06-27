@@ -1,10 +1,15 @@
-"""Sinh các map game + bảng level (15 level = 5 map × 3 màn).
+"""Sinh các map game + bảng level.
 
-Quy tắc (giai đoạn đầu — đơn giản, camera CỐ ĐỊNH cho mọi map):
-  - 5 map, vị trí vật khác nhau giữa các map.
-  - Mỗi map có ÍT NHẤT 1 vật mỗi loại (3 loại) và TỐI ĐA 5 vật
-    (thêm 0..2 vật "distractor" trùng loại để tăng độ khó thị giác).
-  - Mỗi map có 3 màn, mỗi màn yêu cầu gắp 1 LOẠI vật (lần lượt 3 loại cơ bản).
+Gồm hai nhóm map:
+  - Map "đầy đủ" (mặc định 5 map × 3 màn): mỗi map có ÍT NHẤT 1 vật mỗi loại
+    (3 loại) và TỐI ĐA 5 vật (thêm 0..2 vật "distractor" trùng loại để tăng độ
+    khó thị giác). Mỗi map có 3 màn, mỗi màn yêu cầu gắp 1 LOẠI vật.
+  - Map "curriculum dễ" (mặc định 5 map × 1 màn): mỗi map CHỈ có 1 vật và 1 màn,
+    KHÔNG có vật gây nhiễu. Mục đích cho mô hình học từ dễ lên khó. Các map này
+    đánh số nối tiếp sau các map đầy đủ, loại vật luân phiên qua 3 loại cơ bản.
+
+Quy tắc chung (giai đoạn đầu — đơn giản, camera CỐ ĐỊNH cho mọi map):
+  - Vị trí vật khác nhau giữa các map.
   - Mỗi màn chạy tối đa 20 step.
 
 Vị trí vật được rải trong vùng với tới của cánh tay, cách nhau tối thiểu, và
@@ -104,8 +109,47 @@ def _target_for_type(objects: list, type_id: str) -> str:
     raise KeyError(f"Map thiếu loại {type_id}")
 
 
-def generate(config: dict, *, n_maps: int = 5, seed: int = 0) -> list:
-    """Sinh toàn bộ level table. Trả về list các bản ghi level."""
+def _instruction_vi(t, target_name: str) -> str:
+    return f"Gắp {t.desc_vi} ({target_name}) rồi thả vào giỏ."
+
+
+def _instruction_en(t, target_name: str) -> str:
+    return f"Grasp the {t.desc_en} ({target_name}) and drop it into the basket."
+
+
+def _clean_objects(objects: list) -> list:
+    """Chỉ giữ các khoá cần để scene_builder dựng lại cảnh."""
+    return [
+        {k: o[k] for k in ("name", "shape", "size", "pos", "rgba", "mass")}
+        for o in objects
+    ]
+
+
+def _build_single_object(rng: random.Random, t, keepout) -> dict:
+    """Tạo 1 vật duy nhất (đúng 1 instance loại ``t``) cho map curriculum dễ."""
+    (x, y), = _sample_positions(rng, 1, keepout)
+    return {
+        "name": t.type_id,
+        "type_id": t.type_id,
+        "shape": t.shape,
+        "size": list(t.size),
+        "pos": [round(x, 4), round(y, 4), t.rest_z],
+        "rgba": list(t.rgba),
+        "mass": t.mass,
+    }
+
+
+def generate(config: dict, *, n_maps: int = 5, n_easy_maps: int = 5,
+             seed: int = 0) -> list:
+    """Sinh toàn bộ level table. Trả về list các bản ghi level.
+
+    Gồm hai phần:
+      - ``n_maps`` map "đầy đủ": mỗi map >=1 vật mỗi loại + 0..2 distractor,
+        3 màn (1 màn / loại). Đây là phần khó.
+      - ``n_easy_maps`` map "curriculum dễ": mỗi map CHỈ 1 vật và 1 màn, không
+        có vật gây nhiễu. Đánh số nối tiếp sau các map đầy đủ. Loại vật luân
+        phiên qua 3 loại cơ bản để mô hình làm quen từng loại.
+    """
     rng = random.Random(seed)
     keepout = _basket_keepout(config)
     levels = []
@@ -119,16 +163,29 @@ def generate(config: dict, *, n_maps: int = 5, seed: int = 0) -> list:
                 "map_id": f"map{map_idx}",
                 "target_type": t.type_id,
                 "target_object_name": target_name,
-                "instruction_vi": f"Gắp {t.desc_vi} ({target_name}) "
-                                  f"rồi thả vào giỏ.",
+                "instruction_vi": _instruction_vi(t, target_name),
+                "instruction_en": _instruction_en(t, target_name),
                 "max_steps": MAX_STEPS,
                 # objects tự chứa: đủ để scene_builder dựng lại cảnh map này.
-                "objects": [
-                    {k: o[k] for k in
-                     ("name", "shape", "size", "pos", "rgba", "mass")}
-                    for o in objects
-                ],
+                "objects": _clean_objects(objects),
             })
+
+    # Phần curriculum dễ: map đơn-vật, đánh số nối tiếp sau các map đầy đủ.
+    for i in range(n_easy_maps):
+        map_idx = n_maps + i
+        t = OBJECT_TYPES[i % len(OBJECT_TYPES)]
+        obj = _build_single_object(rng, t, keepout)
+        target_name = obj["name"]
+        levels.append({
+            "level_id": f"map{map_idx}_lvl0_{t.type_id}",
+            "map_id": f"map{map_idx}",
+            "target_type": t.type_id,
+            "target_object_name": target_name,
+            "instruction_vi": _instruction_vi(t, target_name),
+            "instruction_en": _instruction_en(t, target_name),
+            "max_steps": MAX_STEPS,
+            "objects": _clean_objects([obj]),
+        })
     return levels
 
 
@@ -171,15 +228,19 @@ def main():
     p.add_argument("--config", default=str(ROOT / "config.yaml"))
     p.add_argument("--out", default=str(DEFAULT_OUT))
     p.add_argument("--maps", type=int, default=5)
+    p.add_argument("--easy-maps", type=int, default=5,
+                   help="Số map curriculum dễ (1 vật, 1 màn), nối sau map đầy đủ.")
     p.add_argument("--seed", type=int, default=0)
     args = p.parse_args()
 
     config = yaml.safe_load(Path(args.config).read_text(encoding="utf-8"))
-    levels = generate(config, n_maps=args.maps, seed=args.seed)
+    levels = generate(config, n_maps=args.maps, n_easy_maps=args.easy_maps,
+                      seed=args.seed)
     Path(args.out).write_text(
         json.dumps(levels, ensure_ascii=False, indent=2), encoding="utf-8")
-    print(f"Đã sinh {len(levels)} level ({args.maps} map × {LEVELS_PER_MAP}) "
-          f"-> {args.out}")
+    print(f"Đã sinh {len(levels)} level "
+          f"({args.maps} map đầy đủ × {LEVELS_PER_MAP} + "
+          f"{args.easy_maps} map dễ × 1) -> {args.out}")
 
     # Xuất robot_spec.json (giới hạn khớp + home) cho server GPU build prompt.
     spec_path = Path(args.out).parent / "robot_spec.json"

@@ -19,6 +19,7 @@ class ObjectType:
     mass: float
     desc_vi: str        # mô tả tiếng Việt cho instruction/prompt
     rest_z: float       # z lúc đặt trên sàn (nửa chiều cao vật)
+    desc_en: str        # mô tả tiếng Anh cho instruction/prompt
 
 
 # 3 loại cơ bản, màu tương phản rõ với sàn và với nhau.
@@ -27,16 +28,19 @@ OBJECT_TYPES: list[ObjectType] = [
         type_id="cube_red", shape="box",
         size=[0.018, 0.018, 0.018], rgba=[0.9, 0.2, 0.2, 1.0], mass=0.02,
         desc_vi="khối lập phương màu đỏ", rest_z=0.018,
+        desc_en="red cube",
     ),
     ObjectType(
         type_id="cyl_green", shape="cylinder",
         size=[0.016, 0.022], rgba=[0.2, 0.8, 0.35, 1.0], mass=0.02,
         desc_vi="khối trụ màu xanh lá", rest_z=0.022,
+        desc_en="green cylinder",
     ),
     ObjectType(
         type_id="sphere_blue", shape="sphere",
         size=[0.018], rgba=[0.2, 0.45, 0.95, 1.0], mass=0.02,
         desc_vi="quả cầu màu xanh dương", rest_z=0.018,
+        desc_en="blue sphere",
     ),
 ]
 

@@ -1369,5 +1369,161 @@
         "mass": 0.02
       }
     ]
+  },
+  {
+    "level_id": "map5_lvl0_cube_red",
+    "map_id": "map5",
+    "target_type": "cube_red",
+    "target_object_name": "cube_red",
+    "instruction_vi": "Gắp khối lập phương màu đỏ (cube_red) rồi thả vào giỏ.",
+    "instruction_en": "Grasp the red cube (cube_red) and drop it into the basket.",
+    "max_steps": 20,
+    "objects": [
+      {
+        "name": "cube_red",
+        "shape": "box",
+        "size": [
+          0.018,
+          0.018,
+          0.018
+        ],
+        "pos": [
+          0.1476,
+          0.0623,
+          0.018
+        ],
+        "rgba": [
+          0.9,
+          0.2,
+          0.2,
+          1.0
+        ],
+        "mass": 0.02
+      }
+    ]
+  },
+  {
+    "level_id": "map6_lvl0_cyl_green",
+    "map_id": "map6",
+    "target_type": "cyl_green",
+    "target_object_name": "cyl_green",
+    "instruction_vi": "Gắp khối trụ màu xanh lá (cyl_green) rồi thả vào giỏ.",
+    "instruction_en": "Grasp the green cylinder (cyl_green) and drop it into the basket.",
+    "max_steps": 20,
+    "objects": [
+      {
+        "name": "cyl_green",
+        "shape": "cylinder",
+        "size": [
+          0.016,
+          0.022
+        ],
+        "pos": [
+          0.2049,
+          0.079,
+          0.022
+        ],
+        "rgba": [
+          0.2,
+          0.8,
+          0.35,
+          1.0
+        ],
+        "mass": 0.02
+      }
+    ]
+  },
+  {
+    "level_id": "map7_lvl0_sphere_blue",
+    "map_id": "map7",
+    "target_type": "sphere_blue",
+    "target_object_name": "sphere_blue",
+    "instruction_vi": "Gắp quả cầu màu xanh dương (sphere_blue) rồi thả vào giỏ.",
+    "instruction_en": "Grasp the blue sphere (sphere_blue) and drop it into the basket.",
+    "max_steps": 20,
+    "objects": [
+      {
+        "name": "sphere_blue",
+        "shape": "sphere",
+        "size": [
+          0.018
+        ],
+        "pos": [
+          0.179,
+          0.09,
+          0.018
+        ],
+        "rgba": [
+          0.2,
+          0.45,
+          0.95,
+          1.0
+        ],
+        "mass": 0.02
+      }
+    ]
+  },
+  {
+    "level_id": "map8_lvl0_cube_red",
+    "map_id": "map8",
+    "target_type": "cube_red",
+    "target_object_name": "cube_red",
+    "instruction_vi": "Gắp khối lập phương màu đỏ (cube_red) rồi thả vào giỏ.",
+    "instruction_en": "Grasp the red cube (cube_red) and drop it into the basket.",
+    "max_steps": 20,
+    "objects": [
+      {
+        "name": "cube_red",
+        "shape": "box",
+        "size": [
+          0.018,
+          0.018,
+          0.018
+        ],
+        "pos": [
+          0.178,
+          -0.0099,
+          0.018
+        ],
+        "rgba": [
+          0.9,
+          0.2,
+          0.2,
+          1.0
+        ],
+        "mass": 0.02
+      }
+    ]
+  },
+  {
+    "level_id": "map9_lvl0_cyl_green",
+    "map_id": "map9",
+    "target_type": "cyl_green",
+    "target_object_name": "cyl_green",
+    "instruction_vi": "Gắp khối trụ màu xanh lá (cyl_green) rồi thả vào giỏ.",
+    "instruction_en": "Grasp the green cylinder (cyl_green) and drop it into the basket.",
+    "max_steps": 20,
+    "objects": [
+      {
+        "name": "cyl_green",
+        "shape": "cylinder",
+        "size": [
+          0.016,
+          0.022
+        ],
+        "pos": [
+          0.186,
+          0.0993,
+          0.022
+        ],
+        "rgba": [
+          0.2,
+          0.8,
+          0.35,
+          1.0
+        ],
+        "mass": 0.02
+      }
+    ]
   }
 ]
