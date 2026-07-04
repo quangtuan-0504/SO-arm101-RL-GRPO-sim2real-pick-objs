@@ -102,11 +102,16 @@ def obj_in_basket(sim, target_name: str, basket: BasketGeometry | None,
 # ----------------------------------------------------------------------
 @dataclass
 class StateMeasure:
-    d_grip_obj: float       # khoảng cách đầu kẹp ↔ vật
+    d_grip_obj: float       # khoảng cách đầu kẹp ↔ vật (3D)
     d_obj_basket: float     # khoảng cách vật ↔ tâm giỏ
     grasped: bool
     in_basket: bool
     obj_z: float
+    # --- thành phần cho phễu tiền-kẹp (pre-grasp pose shaping) ---
+    # Tách d_grip_obj thành lệch NGANG và chênh CAO để Φ biết "hướng" tiếp cận,
+    # không chỉ biết khoảng cách trần. Mặc định 0.0 để dict cũ vẫn dựng được.
+    d_xy: float = 0.0       # khoảng cách ngang (mặt phẳng xy) đầu kẹp ↔ vật
+    dz: float = 0.0         # chênh cao đầu kẹp − vật (>0: đầu kẹp ở TRÊN vật)
 
 
 def measure_state(sim, target_name: str,
@@ -119,36 +124,74 @@ def measure_state(sim, target_name: str,
         d_basket = dist(obj, basket.center)
     else:
         d_basket = 0.0
+    # Lệch ngang (xy) và chênh cao (z) cho phễu tiền-kẹp.
+    d_xy = float(np.hypot(grasp[0] - obj[0], grasp[1] - obj[1]))
+    dz = float(grasp[2] - obj[2])
     return StateMeasure(
         d_grip_obj=dist(grasp, obj),
         d_obj_basket=d_basket,
         grasped=grasped,
         in_basket=obj_in_basket(sim, target_name, basket),
         obj_z=float(obj[2]),
+        d_xy=d_xy,
+        dz=dz,
     )
 
 
 # Trọng số mặc định cho hàm thế năng. Có thể chỉnh khi tinh reward.
 PHI_WEIGHTS = {
-    "approach": 1.0,    # gần vật hơn = tốt (pha approach)
-    "grasped": 1.0,     # mốc rời rạc: kẹp được vật
-    "carry": 1.0,       # khi đã kẹp: gần giỏ hơn = tốt (pha carry)
-    "in_basket": 2.0,   # mốc cuối: thả vào giỏ
+    # --- pha APPROACH (chưa kẹp): PHỄU tiền-kẹp, kẹp từ TRÊN xuống ---
+    # Bề mặt Φ được nắn thành cái "phễu": gradient tại mỗi điểm dẫn cánh tay
+    # ĐI LÊN -> CANH NGANG trên vật -> HẠ THẲNG xuống, thay vì lao ngang vào
+    # vật (tránh hất văng vật nằm sát ngàm). Hai cơ chế:
+    #   (a) ĐÍCH kéo blend: khi còn lệch ngang -> kéo tới ĐIỂM CHỜ phía trên
+    #       vật (nâng lên được thưởng); khi đã canh thẳng -> kéo thẳng tới vật
+    #       (hạ xuống được thưởng).
+    #   (b) PHẠT va chạm: tiếp cận ngang khi đầu kẹp còn THẤP và chưa canh ->
+    #       bị phạt mạnh, ép cánh tay đi "đường trên".
+    "approach": 1.0,      # lực kéo tới đích tiền-kẹp (điểm chờ -> dần xuống vật)
+    "danger": 4.0,        # phạt tiếp cận ngang khi còn thấp & chưa canh (chống đâm)
+    "h_standoff": 0.10,   # (m) độ cao điểm chờ phía trên vật
+    "r_funnel": 0.08,     # (m) bán kính "đã canh thẳng" (blend đích & tắt phạt)
+    "r_danger": 0.12,     # (m) bán kính vùng dễ va chạm khi đầu kẹp ở thấp
+    # --- pha sau khi kẹp ---
+    "grasped": 1.0,       # mốc rời rạc: kẹp được vật
+    "carry": 1.0,         # khi đã kẹp: gần giỏ hơn = tốt (pha carry)
+    "in_basket": 2.0,     # mốc cuối: thả vào giỏ
 }
 
 
 def potential(m: StateMeasure, weights: dict | None = None) -> float:
-    """Hàm thế năng Φ cho PBRS.
+    """Hàm thế năng Φ cho PBRS (kèm PHỄU tiền-kẹp ở pha approach).
 
-    Φ tăng dần khi tiến gần mục tiêu cuối. Việc chuyển từ "thưởng gần vật"
-    sang "thưởng gần giỏ" được kích hoạt bởi sự kiện ``grasped`` (đo khách
-    quan), KHÔNG bởi nhãn pha do model khai, nên model không thể gian lận.
+    Φ tăng dần khi tiến gần mục tiêu cuối. Việc chuyển từ pha approach sang
+    pha carry được kích hoạt bởi sự kiện ``grasped`` (đo khách quan), KHÔNG
+    bởi nhãn pha do model khai, nên model không thể gian lận.
+
+    PHA APPROACH (chưa kẹp) thay khoảng cách trần ``-d_grip_obj`` bằng phễu:
+        base   = na · d(đầu kẹp, ĐIỂM CHỜ trên vật) + al · d(đầu kẹp, VẬT)
+        danger = relu(r_danger − d_xy) · lowness · na
+        Φ_pre  = − approach · base − danger_w · danger
+    với na = clip(d_xy/r_funnel, 0, 1)  (1 khi còn lệch ngang, 0 khi đã canh),
+        al = 1 − na, lowness = clip(1 − dz/h_standoff, 0, 1).
+    Khi còn lệch ngang (na≈1): đích kéo là điểm chờ phía TRÊN vật -> nâng lên
+    được thưởng; đồng thời tiếp cận ngang lúc còn thấp bị ``danger`` phạt.
+    Khi đã canh thẳng (na≈0): đích kéo là chính vật và phạt tắt -> hạ thẳng
+    xuống được thưởng. Φ là hàm thuần của trạng thái -> giữ đảm bảo PBRS.
     """
     w = {**PHI_WEIGHTS, **(weights or {})}
-    phi = w["approach"] * (-m.d_grip_obj)
-    if m.grasped:
-        phi += w["grasped"]
-        phi += w["carry"] * (-m.d_obj_basket)
+    if not m.grasped:
+        r_funnel = max(w["r_funnel"], 1e-6)
+        h = max(w["h_standoff"], 1e-6)
+        na = min(max(m.d_xy / r_funnel, 0.0), 1.0)   # 1: còn lệch ngang, 0: đã canh
+        al = 1.0 - na
+        lowness = min(max(1.0 - m.dz / h, 0.0), 1.0)  # 1: sát vật/thấp, 0: ở độ cao chờ
+        d_to_standoff = float(np.hypot(m.d_xy, m.dz - h))  # đầu kẹp -> điểm chờ trên vật
+        base = na * d_to_standoff + al * m.d_grip_obj
+        danger = max(0.0, w["r_danger"] - m.d_xy) * lowness * na
+        phi = -w["approach"] * base - w["danger"] * danger
+    else:
+        phi = w["grasped"] + w["carry"] * (-m.d_obj_basket)
     if m.in_basket:
         phi += w["in_basket"]
     return float(phi)

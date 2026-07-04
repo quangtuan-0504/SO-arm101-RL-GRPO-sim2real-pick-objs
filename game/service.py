@@ -75,6 +75,8 @@ def _measure_dict(m: StateMeasure) -> dict:
         "grasped": m.grasped,
         "in_basket": m.in_basket,
         "obj_z": m.obj_z,
+        "d_xy": m.d_xy,
+        "dz": m.dz,
     }
 
 

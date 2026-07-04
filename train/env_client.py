@@ -18,7 +18,7 @@ class StepObs:
     wrist_image: str            # data URL
     stand_image: str            # data URL
     ctrl_angles: dict
-    measure: dict               # {d_grip_obj, d_obj_basket, grasped, in_basket, obj_z}
+    measure: dict               # {d_grip_obj, d_obj_basket, grasped, in_basket, obj_z, d_xy, dz}
     step_idx: int
     max_steps: int
     done: bool
