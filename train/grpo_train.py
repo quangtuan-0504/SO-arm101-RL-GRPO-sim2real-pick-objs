@@ -333,7 +333,7 @@ def main():
         temperature=1,             # cao hơn 1.0 -> G completion đa dạng góc,
                                      # GRPO mới có phương sai để học (tránh collapse)
         top_p=0.95,
-        beta=0.5,                    # khởi đầu tắt KL cho đơn giản; bật sau nếu lệch
+        beta=0,                    # khởi đầu tắt KL cho đơn giản; bật sau nếu lệch
         use_vllm=args.use_vllm,
         vllm_mode="colocate" if args.use_vllm else None,
         vllm_gpu_memory_utilization=args.vllm_gpu_util,
