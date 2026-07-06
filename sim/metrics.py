@@ -140,20 +140,15 @@ def measure_state(sim, target_name: str,
 
 # Trọng số mặc định cho hàm thế năng. Có thể chỉnh khi tinh reward.
 PHI_WEIGHTS = {
-    # --- pha APPROACH (chưa kẹp): PHỄU tiền-kẹp, kẹp từ TRÊN xuống ---
-    # Bề mặt Φ được nắn thành cái "phễu": gradient tại mỗi điểm dẫn cánh tay
-    # ĐI LÊN -> CANH NGANG trên vật -> HẠ THẲNG xuống, thay vì lao ngang vào
-    # vật (tránh hất văng vật nằm sát ngàm). Hai cơ chế:
-    #   (a) ĐÍCH kéo blend: khi còn lệch ngang -> kéo tới ĐIỂM CHỜ phía trên
-    #       vật (nâng lên được thưởng); khi đã canh thẳng -> kéo thẳng tới vật
-    #       (hạ xuống được thưởng).
-    #   (b) PHẠT va chạm: tiếp cận ngang khi đầu kẹp còn THẤP và chưa canh ->
-    #       bị phạt mạnh, ép cánh tay đi "đường trên".
-    "approach": 1.0,      # lực kéo tới đích tiền-kẹp (điểm chờ -> dần xuống vật)
-    "danger": 4.0,        # phạt tiếp cận ngang khi còn thấp & chưa canh (chống đâm)
-    "h_standoff": 0.10,   # (m) độ cao điểm chờ phía trên vật
-    "r_funnel": 0.08,     # (m) bán kính "đã canh thẳng" (blend đích & tắt phạt)
-    "r_danger": 0.12,     # (m) bán kính vùng dễ va chạm khi đầu kẹp ở thấp
+    # --- pha APPROACH (chưa kẹp): HÀNH LANG CHỮ L, kẹp từ TRÊN xuống ---
+    # Bề mặt Φ là MỘT hàm khoảng-cách-tiến-trình duy nhất (không blend 2 đích),
+    # đơn điệu dọc đường đi lý tưởng: NÂNG lên -> CANH NGANG trên vật -> HẠ
+    # THẲNG xuống. Cơ chế: lệch ngang bị phạt NẶNG hơn khi đầu kẹp còn THẤP,
+    # nên cách rẻ nhất để tiến khi đang ở thấp là nâng lên trước (đi "đường
+    # trên", tránh húc văng vật) — thay cho term "danger" rời rạc trước đây.
+    "approach": 1.0,      # scale tổng cho khoảng cách tiếp cận
+    "low_penalty": 3.0,   # hệ số phạt lệch NGANG khi đầu kẹp còn thấp (ép đường trên)
+    "h_standoff": 0.10,   # (m) độ cao coi là "đủ cao để tiến ngang an toàn"
     # --- pha sau khi kẹp ---
     "grasped": 1.0,       # mốc rời rạc: kẹp được vật
     "carry": 1.0,         # khi đã kẹp: gần giỏ hơn = tốt (pha carry)
@@ -162,34 +157,33 @@ PHI_WEIGHTS = {
 
 
 def potential(m: StateMeasure, weights: dict | None = None) -> float:
-    """Hàm thế năng Φ cho PBRS (kèm PHỄU tiền-kẹp ở pha approach).
+    """Hàm thế năng Φ cho PBRS (HÀNH LANG CHỮ L ở pha approach).
 
     Φ tăng dần khi tiến gần mục tiêu cuối. Việc chuyển từ pha approach sang
     pha carry được kích hoạt bởi sự kiện ``grasped`` (đo khách quan), KHÔNG
     bởi nhãn pha do model khai, nên model không thể gian lận.
 
-    PHA APPROACH (chưa kẹp) thay khoảng cách trần ``-d_grip_obj`` bằng phễu:
-        base   = na · d(đầu kẹp, ĐIỂM CHỜ trên vật) + al · d(đầu kẹp, VẬT)
-        danger = relu(r_danger − d_xy) · lowness · na
-        Φ_pre  = − approach · base − danger_w · danger
-    với na = clip(d_xy/r_funnel, 0, 1)  (1 khi còn lệch ngang, 0 khi đã canh),
-        al = 1 − na, lowness = clip(1 − dz/h_standoff, 0, 1).
-    Khi còn lệch ngang (na≈1): đích kéo là điểm chờ phía TRÊN vật -> nâng lên
-    được thưởng; đồng thời tiếp cận ngang lúc còn thấp bị ``danger`` phạt.
-    Khi đã canh thẳng (na≈0): đích kéo là chính vật và phạt tắt -> hạ thẳng
-    xuống được thưởng. Φ là hàm thuần của trạng thái -> giữ đảm bảo PBRS.
+    PHA APPROACH (chưa kẹp) — MỘT hàm khoảng cách liền, đơn điệu:
+        belowness = clip((h − dz) / h, 0, 1)   # 1: ngang/dưới vật; 0: ≥ độ cao chờ
+        L   = d_xy · (1 + low_penalty · belowness) + |dz|
+        Φ   = − approach · L
+    Ý nghĩa: lệch ngang ``d_xy`` bị phạt nặng hơn khi đầu kẹp còn thấp
+    (``belowness`` lớn) -> nâng lên trước rồi mới tiến ngang; khi đã canh thẳng
+    (``d_xy`` ≈ 0) thì ``|dz|`` kéo hạ thẳng xuống vật. KHÔNG đổi gốc quy chiếu
+    giữa chừng nên KHÔNG còn "thung lũng" Φ quanh điểm canh thẳng (nguyên nhân
+    reward per-step âm trên chính quỹ đạo thành công). Φ là hàm thuần trạng
+    thái -> giữ đảm bảo PBRS (không bóp méo chính sách tối ưu).
     """
     w = {**PHI_WEIGHTS, **(weights or {})}
     if not m.grasped:
-        r_funnel = max(w["r_funnel"], 1e-6)
         h = max(w["h_standoff"], 1e-6)
-        na = min(max(m.d_xy / r_funnel, 0.0), 1.0)   # 1: còn lệch ngang, 0: đã canh
-        al = 1.0 - na
-        lowness = min(max(1.0 - m.dz / h, 0.0), 1.0)  # 1: sát vật/thấp, 0: ở độ cao chờ
-        d_to_standoff = float(np.hypot(m.d_xy, m.dz - h))  # đầu kẹp -> điểm chờ trên vật
-        base = na * d_to_standoff + al * m.d_grip_obj
-        danger = max(0.0, w["r_danger"] - m.d_xy) * lowness * na
-        phi = -w["approach"] * base - w["danger"] * danger
+        k = w["low_penalty"]
+        # belowness: 1 khi đầu kẹp ở ngang/dưới vật (dễ húc), 0 khi ≥ độ cao chờ.
+        belowness = min(max((h - m.dz) / h, 0.0), 1.0)
+        # Khoảng cách tiếp cận theo hành lang chữ L (liên tục, đơn điệu dọc
+        # đường lý tưởng). Lệch ngang bị "khuếch đại" khi còn thấp -> ép nâng lên.
+        L = m.d_xy * (1.0 + k * belowness) + abs(m.dz)
+        phi = -w["approach"] * L
     else:
         phi = w["grasped"] + w["carry"] * (-m.d_obj_basket)
     if m.in_basket:

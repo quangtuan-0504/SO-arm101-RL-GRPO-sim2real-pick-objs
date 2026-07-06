@@ -1,6 +1,6 @@
 # quá trình huấn luyện nên dùng Lora hay finetuni...
 
-Exported: 7/4/2026, 10:45:08 PM
+Exported: 7/6/2026, 11:09:18 AM
 
 ---
 
@@ -132,5 +132,153 @@ Trước khi kết luận pipeline đúng/sai, nên tách bạch "reward có đ�
 Tóm lại: kiến trúc (privileged geometric reward + vision-only policy, single-step GRPO) là hợp lý về nguyên tắc, nhưng **cách trộn format vào reward + KL beta=0.5 + chưa từng chạm mốc grasp** khiến tín hiệu học gần như chỉ còn "viết JSON đúng". Hãy sửa phần reward shaping và xác minh Φ đơn điệu trên quỹ đạo thành công trước, rồi mới chạy dài.
 
 Bạn muốn tôi sửa luôn phần tách format/geometric trong `episode_manager.py` và viết script kiểm tra Φ trên quỹ đạo scripted không?
+
+---
+
+**User:**
+
+Tách format khỏi reward giá trị. Đừng cộng thẳng format +1.0 vào total. Dùng format như gate cứng (sai → reward âm cố định, ví dụ −1, và không branch) còn completion hợp lệ thì chỉ chấm bằng geometric. 
+viết script kiểm tra Φ trên quỹ đạo scripted
+
+---
+
+**Assistant:**
+
+Bắt đầu với việc sửa `episode_manager.py`. Trước tiên kiểm tra chỗ nào tham chiếu `format_weight` để không phá test.
+
+Có hai đường: `episode_manager.py` (dùng bởi grpo_train) và `rollout.py` (vòng lặp thay thế). Tôi xem test để giữ tương thích.
+
+Test chỉ kiểm `geometric_rewards` và `n_valid`, không phụ thuộc thành phần format trong total — nên đổi an toàn. Tôi sửa `episode_manager.py`.
+
+Giờ kiểm tra dòng tính `total` và comment quanh nó.
+
+Cập nhật comment mô tả field để phản ánh ngữ nghĩa mới.
+
+Cập nhật `rollout.py` cho nhất quán vì nó là bản sao cùng logic reward.
+
+Giờ viết script kiểm tra Φ trên quỹ đạo scripted. Tôi cần hiểu API của `Simulation`.
+
+Tôi đã hiểu API. Giờ viết script kiểm tra Φ. Script sẽ dựng một quỹ đạo lý tưởng (tiến tới vật → canh → hạ → kẹp → nhấc → mang sang giỏ → thả) bằng chuỗi `StateMeasure`, in `potential()` và `geometric_reward` từng bước, và **tự đánh dấu các bước Φ giảm** — vì đó chính là điểm chống lại việc học PBRS một-step.
+
+Chạy thử script để xác nhận nó hoạt động và xem Φ có đơn điệu không.
+
+Script chạy tốt và đã lộ ra một khiếm khuyết thật: Φ **giảm ngay tại bước canh thẳng trên vật** (bước 5 và 7) — đúng chỗ cánh tay cần canh trước khi hạ xuống. Kiểm tra import các file đã sửa cho chắc.
+
+Cả hai thay đổi xong và verify sạch. Tóm tắt:
+
+## 1. Format thành gate cứng (bỏ cộng điểm dương)
+
+Trong `train/episode_manager.py` (và đồng bộ luôn `train/rollout.py`):
+
+- Đổi tham số `format_weight` → `invalid_format_penalty` (mặc định `1.0`).
+- Completion **hợp lệ**: `fmt = 0.0` → `total = geometric` thuần (không còn +1.0 lấn át tín hiệu).
+- Completion **sai format**: `fmt = -invalid_format_penalty`, và **không branch** vào game (logic branch cũ vốn đã chỉ branch `valid_idx`, nên giữ nguyên) → `total = -1.0`.
+
+Kết quả: advantage trong nhóm GRPO giờ phản ánh **chất lượng chuyển động**, còn cú pháp sai bị phạt âm cố định thay vì chỉ "mất phần thưởng". Trường `format_rewards` vẫn được log (nay mang giá trị 0/âm) nên `metrics_logger`/plot không vỡ. Test hiện có chỉ kiểm `geometric_rewards` và `n_valid` nên không bị ảnh hưởng.
+
+## 2. Script kiểm tra Φ: `train/check_potential.py`
+
+Dựng quỹ đạo gắp thành công lý tưởng (tiến → canh → hạ → kẹp → nhấc → mang → thả), in `Φ`, `ΔΦ`, và `geometric_reward` từng bước, tự đánh dấu các bước Φ giảm. Chạy:
+
+```
+.venv/bin/python -m train.check_potential --steps 6
+```
+
+**Phát hiện quan trọng ngay từ lần chạy đầu:** trên chính quỹ đạo thành công, Φ **giảm ở 2 bước ngay quanh điểm canh thẳng trên vật** (bước 5: ΔΦ=−0.008; bước 7: ΔΦ=−0.005). Nguyên nhân: trong `potential()`, khi đầu kẹp đã canh thẳng (`na→0`) nhưng còn ở độ cao chờ, đích kéo chuyển từ "điểm chờ" sang "chính vật", làm `base` tăng vọt lên ≈ `h_standoff` → tạo một "thung lũng" Φ đúng tại chỗ cần canh trước khi hạ.
+
+Với GRPO single-step PBRS, ΔΦ<0 nghĩa là reward per-step **âm** cho đúng động tác canh-thẳng. Policy tham lam một-bước bị khuyến khích **né** việc canh trên vật → rất khớp với triệu chứng grasp-rate = 0% bạn thấy trong log.
+
+Đây là bằng chứng cụ thể cho thấy vấn đề nằm ở **hình dạng của Φ**, không chỉ ở cách trộn format. Bước tiếp theo nên là làm mượt đoạn chuyển "phao chờ → vật" trong `potential()` (blend liên tục theo độ cao) hoặc giảm trọng số `danger`, rồi chạy lại `check_potential` cho tới khi báo `[PASS]`. Bạn muốn tôi sửa `potential()` để khử thung lũng này không?
+
+---
+
+**User:**
+
+hãy nghiên cứu và đề xuất cách giải quyết vấn đề này
+
+---
+
+**Assistant:**
+
+Vấn đề đã rõ về mặt toán học. Giờ tôi nghiên cứu kỹ nguyên nhân gốc trong `potential()` và thiết kế lại. Trước tiên kiểm tra xem `r_funnel`/`r_danger`/`danger` còn được tham chiếu ở đâu ngoài `metrics.py`.
+
+Các key trọng số chỉ được dùng trong `metrics.py` (và `check_potential` đọc `h_standoff`); `game/service.py` chỉ serialize `d_xy/dz`. Nên có thể thiết kế lại an toàn.
+
+## Nghiên cứu nguyên nhân gốc
+
+Công thức `potential()` hiện tại ở pha approach **blend hai hàm khoảng cách khác gốc quy chiếu**:
+
+```
+base = na·d(đầu kẹp → ĐIỂM CHỜ trên vật) + al·d(đầu kẹp → VẬT)
+```
+
+Tại điểm canh thẳng ở độ cao chờ `(d_xy=0, dz=h)`:
+- `d(→ điểm chờ) = 0`
+- `d(→ vật) = h = 0.10`
+
+Hai đích này **không bằng nhau ở biên blend**. Khi `na→0` (canh thẳng dần), `base` bị kéo từ ~0 lên `h`, tạo một **thung lũng Φ ngay tại chỗ cần canh**. Đó là lỗi cấu trúc, không phải chuyện tinh chỉnh trọng số — mọi cặp `(r_funnel, danger)` đều để lại thung lũng vì gốc quy chiếu đổi đột ngột.
+
+## Đề xuất: thay bằng "hành lang chữ L" — một hàm Φ liền, đơn điệu
+
+Thay vì blend hai đích, dùng **một** hàm khoảng-cách-tiến-trình duy nhất mã hoá đúng đường đi mong muốn (nâng lên → canh ngang → hạ thẳng):
+
+```
+belowness = clip((h − dz)/h, 0, 1)          # 1: đầu kẹp ngang/dưới vật; 0: ≥ độ cao chờ
+L = d_xy · (1 + k · belowness) + |dz|
+Φ_pre = − approach · L
+```
+
+Ý tưởng: **lệch ngang bị phạt nặng hơn khi đầu kẹp còn thấp** (`1 + k·belowness`). Hệ quả:
+- Khi thấp & lệch ngang: cách rẻ nhất để giảm `L` là **nâng lên trước** (giảm `belowness` làm rẻ đi số hạng ngang lớn) → tự động đi "đường trên", không cần term `danger` rời rạc.
+- Khi đã canh thẳng (`d_xy≈0`): `L = |dz|` → **hạ xuống được thưởng**.
+- Không còn đổi gốc quy chiếu → **không có thung lũng**.
+
+Về mặt lý thuyết vẫn là hàm thuần trạng thái nên **giữ nguyên đảm bảo PBRS** (không bóp méo chính sách tối ưu). Thay `danger, r_funnel, r_danger` bằng một tham số duy nhất `low_penalty (k)`.
+
+Tôi triển khai luôn rồi verify bằng chính `check_potential.py`.
+
+`[PASS]` — Φ giờ đơn điệu suốt quỹ đạo. Chạy dày hơn để chắc không còn thung lũng ẩn.
+
+Xác nhận thêm tính chất chống va chạm (ưu tiên "nâng lên trước" hơn "tiến ngang khi còn thấp") của Φ mới:
+
+Chống va chạm vẫn đúng: nâng lên (ΔΦ=+0.264) được ưu tiên hơn tiến ngang khi còn thấp (ΔΦ=+0.186), mà không cần term `danger` rời rạc. Cập nhật lại gợi ý trong `check_potential.py` cho khớp thiết kế mới (không còn `danger`).
+
+Thử chạy test reward hiện có để chắc thay đổi không phá gì (test tự dựng `GameEnv`, không cần server).
+
+Xong. Tổng kết nghiên cứu và giải pháp:
+
+## Nguyên nhân gốc
+
+`potential()` cũ ở pha approach **blend hai hàm khoảng cách khác gốc quy chiếu** (`d→điểm chờ` và `d→vật`). Tại điểm canh thẳng ở độ cao chờ, hai đích lệch nhau đúng bằng `h_standoff`, nên khi `na→0` giá trị `base` bị kéo vọt lên → tạo **thung lũng Φ ngay tại chỗ cần canh**. Với PBRS một-step, thung lũng này = reward âm cho đúng động tác canh-thẳng → policy tham lam bị dạy *tránh* canh trên vật, khớp với grasp-rate 0%.
+
+## Giải pháp đã triển khai: "hành lang chữ L"
+
+Thay bằng **một** hàm khoảng-cách-tiến-trình liền, đơn điệu (trong `sim/metrics.py`):
+
+```
+belowness = clip((h − dz)/h, 0, 1)
+L = d_xy·(1 + low_penalty·belowness) + |dz|
+Φ_pre = −approach·L
+```
+
+- Lệch ngang bị phạt nặng hơn khi đầu kẹp còn thấp → tự động "nâng lên trước, tiến ngang sau" mà **không cần term `danger` rời rạc**.
+- Khi đã canh thẳng, `|dz|` kéo hạ thẳng xuống.
+- Không đổi gốc quy chiếu → **không còn thung lũng**; vẫn là hàm thuần trạng thái nên **giữ đảm bảo PBRS**.
+
+Gọn hơn: thay 3 tham số `danger, r_funnel, r_danger` bằng một `low_penalty (k=3.0)`.
+
+## Kiểm chứng
+
+- `check_potential.py`: từ `[CANH BAO] 2 bước Φ giảm` → **`[PASS]` Φ đơn điệu** suốt quỹ đạo (kiểm cả với `--steps 30`).
+- Chống va chạm còn nguyên: từ điểm thấp+lệch, "nâng lên" (ΔΦ=+0.264) được ưu tiên hơn "tiến ngang khi thấp" (ΔΦ=+0.186).
+- `tests/test_env_rewards` vẫn PASS, geometric reward vẫn phân biệt tốt giữa các nhánh.
+
+## Lưu ý tinh chỉnh khi chạy thật
+
+- `low_penalty` càng lớn càng ép "đi đường trên" mạnh (thử 2–5). `h_standoff` nên ≈ chiều cao vật + vài cm.
+- Đáy hành lang (`dz→0`, `d_xy→0`) phải nằm trong vùng `near_thresh=0.05`/`lift_thresh=0.03` mà `is_grasped` công nhận, nếu không tay tới sát vật vẫn không được tính grasped.
+- Có thể override các trọng số này qua `phi_weights` truyền xuống `geometric_reward` mà không sửa code.
+
+Kết hợp với thay đổi format-gate trước đó, giờ tín hiệu học phản ánh đúng chất lượng chuyển động **và** không có anti-incentive quanh điểm canh. Bước tiếp theo nên chạy lại một đợt train ngắn để xem grasp-rate có nhích khỏi 0 không.
 
 ---

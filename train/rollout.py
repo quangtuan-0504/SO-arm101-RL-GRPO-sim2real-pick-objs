@@ -60,7 +60,7 @@ class EpisodeRollout:
     def __init__(self, env: EnvClient, joints_spec: list, level: dict,
                  *, group_size: int = 4,
                  geo_weights: GeoWeights | None = None,
-                 format_weight: float = 1.0,
+                 invalid_format_penalty: float = 1.0,
                  stall_penalty: float = 0.5,
                  stall_eps: float = 1e-2):
         self.env = env
@@ -68,7 +68,9 @@ class EpisodeRollout:
         self.level = level
         self.group_size = group_size
         self.geo_weights = geo_weights or GeoWeights()
-        self.format_weight = format_weight
+        # Format là GATE CỨNG: hợp lệ -> 0.0, sai -> -invalid_format_penalty và
+        # KHÔNG branch. Completion hợp lệ CHỈ chấm bằng geometric.
+        self.invalid_format_penalty = invalid_format_penalty
         # Anti-stall: phạt completion ra góc gần y hệt pose hiện tại (copy
         # home/example/pose cũ -> tay không nhúc nhích). Tạo phương sai trong
         # nhóm GRPO để gradient ưu tiên "có di chuyển" hơn "đứng yên".
@@ -100,7 +102,7 @@ class EpisodeRollout:
         for text in completions:
             res = check_format(text)
             valid_mask.append(res.ok)
-            format_rewards.append(self.format_weight if res.ok else 0.0)
+            format_rewards.append(0.0 if res.ok else -self.invalid_format_penalty)
             angles_list.append(res.angles if res.ok else None)
 
         # --- branch CHỈ các lệnh hợp lệ ---
@@ -122,6 +124,8 @@ class EpisodeRollout:
                 before, after, weights=self.geo_weights,
                 obj_speed_after=br.obj_speed)
 
+        # total = geometric cho completion hợp lệ (fmt=0), = -penalty nếu sai
+        # format (geo=0). Format KHÔNG còn cộng điểm dương vào total.
         total = [format_rewards[i] + geo_rewards[i] for i in range(len(completions))]
 
         # --- anti-stall: phạt completion ra góc ~ y hệt pose hiện tại ---

@@ -28,7 +28,7 @@ def _measure(d: dict) -> StateMeasure:
 @dataclass
 class ScoreResult:
     rewards: list[float]           # tổng reward mỗi completion (theo đúng thứ tự)
-    format_rewards: list[float]
+    format_rewards: list[float]    # 0.0 nếu hợp lệ, -invalid_format_penalty nếu sai
     geometric_rewards: list[float]
     valid_mask: list[bool]
     winner_idx: int | None
@@ -48,7 +48,8 @@ class EpisodeManager:
     def __init__(self, base_url: str, levels: list, joints_spec: list,
                  *, n_parallel: int = 2, group_size: int = 4,
                  geo_weights: GeoWeights | None = None,
-                 format_weight: float = 1.0, img_w: int = 480, img_h: int = 360,
+                 invalid_format_penalty: float = 1.0,
+                 img_w: int = 480, img_h: int = 360,
                  timeout: float = 180.0, seed: int = 0,
                  attach_images: bool = False,
                  stall_penalty: float = 0.5, stall_eps: float = 1e-2):
@@ -57,7 +58,11 @@ class EpisodeManager:
         self.joints = joints_spec
         self.group_size = group_size
         self.geo_weights = geo_weights or GeoWeights()
-        self.format_weight = format_weight
+        # Format là GATE CỨNG, KHÔNG phải điểm cộng: completion sai cú pháp nhận
+        # reward âm cố định (-invalid_format_penalty) và KHÔNG được branch vào
+        # game. Completion hợp lệ CHỈ chấm bằng geometric (PBRS) -> tín hiệu học
+        # phản ánh chất lượng chuyển động, không bị điểm format lấn át/wash-out.
+        self.invalid_format_penalty = invalid_format_penalty
         # Anti-stall: phạt completion ra góc gần y hệt pose hiện tại (copy
         # home/example/pose cũ -> tay không di chuyển). Tạo phương sai trong
         # nhóm GRPO để gradient ưu tiên "đổi góc" hơn "đứng yên".
@@ -141,12 +146,13 @@ class EpisodeManager:
         ep = self._episodes[eid]
         obs = ep.obs
 
-        # 1) format gate
+        # 1) format gate (CỨNG): hợp lệ -> 0.0 (không cộng gì, chỉ mở cửa cho
+        # geometric chấm); sai cú pháp -> -invalid_format_penalty và không branch.
         valid_mask, angles_list, fmt = [], [], []
         for text in completions:
             res = check_format(text)
             valid_mask.append(res.ok)
-            fmt.append(self.format_weight if res.ok else 0.0)
+            fmt.append(0.0 if res.ok else -self.invalid_format_penalty)
             angles_list.append(res.angles if res.ok else None)
 
         # 2) branch chỉ lệnh hợp lệ
@@ -166,6 +172,8 @@ class EpisodeManager:
                                        weights=self.geo_weights,
                                        obj_speed_after=br.obj_speed)
 
+        # total = geometric cho completion hợp lệ (fmt=0), = -penalty cho sai
+        # format (geo=0). Format KHÔNG còn cộng điểm dương vào total.
         total = [fmt[i] + geo[i] for i in range(len(completions))]
 
         # 3b) anti-stall: phạt completion ra góc ~ y hệt pose hiện tại.

@@ -4,10 +4,10 @@
 # pip install   "transformers>=4.56.2,<5"   "trl==1.6.0"   "vllm==0.19.0"
 # pip install peft
 
-transformers == 4.57.6
-trl==1.6.0
-vllm==0.19.0
-peft == 0.19.1
+# transformers == 4.57.6
+# trl==1.6.0
+# vllm==0.19.0
+# peft == 0.19.1
 
 # ver2
 trl==1.7.0
