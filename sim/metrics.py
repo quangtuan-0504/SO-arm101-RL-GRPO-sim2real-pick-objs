@@ -147,7 +147,7 @@ PHI_WEIGHTS = {
     # nên cách rẻ nhất để tiến khi đang ở thấp là nâng lên trước (đi "đường
     # trên", tránh húc văng vật) — thay cho term "danger" rời rạc trước đây.
     "approach": 1.0,      # scale tổng cho khoảng cách tiếp cận
-    "low_penalty": 3.0,   # hệ số phạt lệch NGANG khi đầu kẹp còn thấp (ép đường trên)
+    "low_penalty": 2.0,   # hệ số phạt lệch NGANG khi đầu kẹp còn thấp (ép đường trên)
     "h_standoff": 0.10,   # (m) độ cao coi là "đủ cao để tiến ngang an toàn"
     # --- pha sau khi kẹp ---
     "grasped": 1.0,       # mốc rời rạc: kẹp được vật

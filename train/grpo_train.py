@@ -3,7 +3,8 @@
 Ánh xạ pipeline vào trl (single-step GRPO, theo "Cách A"):
     prompt        = 2 ảnh trạng thái i + instruction + bảng khớp (1 episode/step)
     num_generations = G (số lệnh VLM sinh cho cùng 1 trạng thái)
-    reward        = env_reward_func: format gate (0/1) + geometric (PBRS)
+    reward        = env_reward_func: geometric (PBRS) cho nước HỢP LỆ; nước SAI
+                    FORMAT bị đặt thấp hơn mọi nước hợp lệ (gate theo thứ hạng)
                     -> branch G lệnh trong game -> chấm -> commit winner (advance)
 
 Kiến trúc chạy:

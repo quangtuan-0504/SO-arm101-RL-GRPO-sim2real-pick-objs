@@ -21,9 +21,13 @@ from sim.metrics import StateMeasure, potential
 
 @dataclass
 class GeoWeights:
-    pbrs_scale: float = 10.0      # khuếch đại chênh lệch thế năng cho dễ học
-    grasp_bonus: float = 1.0      # thưởng một lần khi vừa kẹp được vật
-    basket_bonus: float = 5.0     # thưởng lớn khi vật vào giỏ (mốc cuối)
+    # pbrs_scale hạ 10 -> 4: giảm biên độ swing PBRS mỗi step (trước tới ±8,
+    # lấn át mốc rời rạc + nhiễu policy nguội) xuống ~±3 cho tỉ lệ tín/nhiễu tốt.
+    pbrs_scale: float = 4.0       # khuếch đại chênh lệch thế năng cho dễ học
+    # Mốc rời rạc nổi rõ trên nền PBRS: tín hiệu MẠNH cho hành động chính xác
+    # (đóng kẹp đúng lúc / thả vào giỏ) mà PBRS liên tục thưởng rất mờ ở sát đích.
+    grasp_bonus: float = 5.0      # thưởng một lần khi vừa kẹp được vật
+    basket_bonus: float = 10.0    # thưởng lớn khi vật vào giỏ (mốc cuối)
     fling_penalty: float = 1.0    # phạt nếu làm vật văng (vận tốc lớn)
     fling_speed: float = 1.0      # ngưỡng tốc độ coi là "đập" (m/s)
 

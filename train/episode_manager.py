@@ -28,7 +28,7 @@ def _measure(d: dict) -> StateMeasure:
 @dataclass
 class ScoreResult:
     rewards: list[float]           # tổng reward mỗi completion (theo đúng thứ tự)
-    format_rewards: list[float]    # 0.0 nếu hợp lệ, -invalid_format_penalty nếu sai
+    format_rewards: list[float]    # 0.0 nếu hợp lệ; giá trị phạt (< min valid) nếu sai
     geometric_rewards: list[float]
     valid_mask: list[bool]
     winner_idx: int | None
@@ -48,7 +48,7 @@ class EpisodeManager:
     def __init__(self, base_url: str, levels: list, joints_spec: list,
                  *, n_parallel: int = 2, group_size: int = 4,
                  geo_weights: GeoWeights | None = None,
-                 invalid_format_penalty: float = 1.0,
+                 invalid_format_margin: float = 1.0,
                  img_w: int = 480, img_h: int = 360,
                  timeout: float = 180.0, seed: int = 0,
                  attach_images: bool = False,
@@ -59,11 +59,13 @@ class EpisodeManager:
         self.joints = joints_spec
         self.group_size = group_size
         self.geo_weights = geo_weights or GeoWeights()
-        # Format là GATE CỨNG, KHÔNG phải điểm cộng: completion sai cú pháp nhận
-        # reward âm cố định (-invalid_format_penalty) và KHÔNG được branch vào
-        # game. Completion hợp lệ CHỈ chấm bằng geometric (PBRS) -> tín hiệu học
-        # phản ánh chất lượng chuyển động, không bị điểm format lấn át/wash-out.
-        self.invalid_format_penalty = invalid_format_penalty
+        # Format là GATE CỨNG theo THỨ HẠNG: completion sai cú pháp KHÔNG được
+        # branch, và reward của nó được đặt THẤP HƠN MỌI nước hợp lệ một khoảng
+        # ``invalid_format_margin``. Nhờ vậy advantage GRPO của nước sai format
+        # LUÔN âm (kể cả khi cả nhóm nước hợp lệ đều dở) -> model không bao giờ
+        # bị học ngược về việc sinh JSON sai. Completion hợp lệ CHỈ chấm bằng
+        # geometric (PBRS), không bị điểm format lấn át.
+        self.invalid_format_margin = invalid_format_margin
         # Anti-stall: phạt completion ra góc gần y hệt pose hiện tại (copy
         # home/example/pose cũ -> tay không di chuyển). Tạo phương sai trong
         # nhóm GRPO để gradient ưu tiên "đổi góc" hơn "đứng yên".
@@ -192,13 +194,12 @@ class EpisodeManager:
         ep = self._episodes[eid]
         obs = ep.obs
 
-        # 1) format gate (CỨNG): hợp lệ -> 0.0 (không cộng gì, chỉ mở cửa cho
-        # geometric chấm); sai cú pháp -> -invalid_format_penalty và không branch.
-        valid_mask, angles_list, fmt = [], [], []
+        # 1) format gate (CỨNG): hợp lệ -> chấm bằng geometric; sai cú pháp ->
+        # KHÔNG branch, reward đặt thấp hơn mọi nước hợp lệ (tính ở bước 4).
+        valid_mask, angles_list = [], []
         for text in completions:
             res = check_format(text)
             valid_mask.append(res.ok)
-            fmt.append(0.0 if res.ok else -self.invalid_format_penalty)
             angles_list.append(res.angles if res.ok else None)
 
         # 2) branch chỉ lệnh hợp lệ
@@ -207,7 +208,7 @@ class EpisodeManager:
         if valid_idx:
             branches = ep.env.branch([angles_list[i] for i in valid_idx])
 
-        # 3) geometric reward
+        # 3) geometric reward cho completion hợp lệ
         before = _measure(obs.measure)
         geo = [0.0] * len(completions)
         branch_of: dict[int, Branch] = {}
@@ -218,22 +219,44 @@ class EpisodeManager:
                                        weights=self.geo_weights,
                                        obj_speed_after=br.obj_speed)
 
-        # total = geometric cho completion hợp lệ (fmt=0), = -penalty cho sai
-        # format (geo=0). Format KHÔNG còn cộng điểm dương vào total.
-        total = [fmt[i] + geo[i] for i in range(len(completions))]
-
-        # 3b) anti-stall: phạt completion ra góc ~ y hệt pose hiện tại.
-        # Tạo phương sai trong nhóm GRPO -> gradient đẩy model RA KHỎI việc copy
-        # home/example/pose cũ (nguyên nhân tay không di chuyển).
+        # 3b) anti-stall: CHỈ phạt khi hành động là no-op THẬT SỰ, tức cả khớp
+        # tay LẪN gripper đều gần như không đổi (copy y hệt pose hiện tại). Nhờ
+        # vậy động tác đúng lúc gắp — GIỮ NGUYÊN tay, chỉ ĐÓNG kẹp — KHÔNG bị
+        # phạt oan (trước đây bỏ qua gripper nên bị coi là "đứng yên").
         cur = obs.ctrl_angles or {}
         n_stalled = 0
+        stall_mask = [False] * len(completions)
         for i in valid_idx:
             ang = angles_list[i] or {}
-            deltas = [abs(float(ang[n]) - float(cur.get(n, 0.0)))
-                      for n in ang if n != "gripper" and n in cur]
-            if deltas and max(deltas) < self.stall_eps:
-                total[i] -= self.stall_penalty
+            arm_deltas = [abs(float(ang[n]) - float(cur.get(n, 0.0)))
+                          for n in ang if n != "gripper" and n in cur]
+            arm_delta = max(arm_deltas) if arm_deltas else 0.0
+            grip_delta = (abs(float(ang["gripper"]) - float(cur["gripper"]))
+                          if "gripper" in ang and "gripper" in cur else 0.0)
+            if arm_delta < self.stall_eps and grip_delta < self.stall_eps:
+                stall_mask[i] = True
                 n_stalled += 1
+
+        # 4) tổng hợp reward.
+        #   - HỢP LỆ: geometric (trừ stall nếu là no-op thật).
+        #   - SAI FORMAT: đặt = (nước hợp lệ TỆ NHẤT) − invalid_format_margin,
+        #     đảm bảo bất biến "sai format < mọi nước hợp lệ" -> advantage GRPO
+        #     của nó luôn âm, không học ngược. Cả nhóm sai format -> giá trị
+        #     chung (advantage ~ 0, episode reset).
+        total = [0.0] * len(completions)
+        for i in valid_idx:
+            total[i] = geo[i] - (self.stall_penalty if stall_mask[i] else 0.0)
+        if valid_idx:
+            worst_valid = min(total[i] for i in valid_idx)
+            invalid_value = worst_valid - self.invalid_format_margin
+        else:
+            invalid_value = 0.0
+        fmt = [0.0] * len(completions)
+        for i in range(len(completions)):
+            if not valid_mask[i]:
+                total[i] = invalid_value
+                fmt[i] = invalid_value
+
         winner_idx, advanced, finished, success = None, False, False, False
         if valid_idx:
             winner_idx = max(valid_idx, key=lambda i: geo[i])
