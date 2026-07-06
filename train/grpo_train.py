@@ -231,6 +231,13 @@ def main():
     p.add_argument("--use-vllm", action="store_true")
     p.add_argument("--game-timeout", type=float, default=180.0,
                    help="Read timeout (giây) cho mỗi request tới game service")
+    # --- Curriculum: học từ dễ (map ít vật) lên khó ---
+    p.add_argument("--no-curriculum", action="store_true",
+                   help="Tắt curriculum (chọn level ngẫu nhiên đều trên mọi map). "
+                        "Mặc định BẬT: ưu tiên map 1 vật trước, mở dần map khó.")
+    p.add_argument("--curriculum-episodes", type=int, default=200,
+                   help="Số episode để curriculum mở dần từ tier dễ nhất tới hết "
+                        "tier khó nhất.")
     # --- Tiết kiệm bộ nhớ GPU ---
     p.add_argument("--no-lora", action="store_true",
                    help="Tắt LoRA (full fine-tune, ngốn VRAM hơn nhiều)")
@@ -303,7 +310,9 @@ def main():
         n_parallel=args.n_parallel, group_size=args.group_size,
         img_w=args.img_w, img_h=args.img_h,
         timeout=args.game_timeout,
-        attach_images=args.save_images)
+        attach_images=args.save_images,
+        curriculum=not args.no_curriculum,
+        curriculum_episodes=args.curriculum_episodes)
 
     reward_func = build_reward_func(manager, metrics=metrics,
                                     frame_saver=frame_saver)

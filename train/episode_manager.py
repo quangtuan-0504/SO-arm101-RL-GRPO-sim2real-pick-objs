@@ -52,7 +52,8 @@ class EpisodeManager:
                  img_w: int = 480, img_h: int = 360,
                  timeout: float = 180.0, seed: int = 0,
                  attach_images: bool = False,
-                 stall_penalty: float = 0.5, stall_eps: float = 1e-2):
+                 stall_penalty: float = 0.5, stall_eps: float = 1e-2,
+                 curriculum: bool = False, curriculum_episodes: int = 200):
         self.base_url = base_url
         self.levels = levels
         self.joints = joints_spec
@@ -74,6 +75,26 @@ class EpisodeManager:
         self.rng = random.Random(seed)
         self._episodes: dict[str, _Episode] = {}
         self._order: list[str] = []
+
+        # --- Curriculum: học từ dễ (ít vật) lên khó (nhiều vật) ---
+        # Xếp level thành các "tier" theo độ khó = SỐ VẬT trong map. Đầu huấn
+        # luyện chỉ lấy tier dễ nhất (map 1 vật), rồi mở dần các tier khó hơn
+        # theo tiến trình (số episode đã bắt đầu / ``curriculum_episodes``).
+        self.curriculum = curriculum
+        self.curriculum_episodes = max(1, curriculum_episodes)
+        self._episode_count = 0          # số episode đã bắt đầu (spawn + reset)
+        self._last_unlocked = 0          # để log khi mở thêm tier
+        by_diff: dict[int, list] = {}
+        for lv in levels:
+            by_diff.setdefault(len(lv.get("objects", [])), []).append(lv)
+        # Danh sách tier theo độ khó tăng dần; mỗi tier = list level cùng số vật.
+        self._tiers: list[list] = [by_diff[d] for d in sorted(by_diff)]
+        if self.curriculum:
+            summary = ", ".join(
+                f"{len(t)}lvl@{len(t[0].get('objects', []))}vật"
+                for t in self._tiers)
+            print(f"[EpisodeManager] curriculum BẬT: {len(self._tiers)} tier "
+                  f"({summary}); mở hết sau ~{self.curriculum_episodes} episode.")
 
         # Health-check sớm: báo lỗi rõ ràng nếu tunnel/game service chưa sẵn sàng.
         self._preflight()
@@ -101,11 +122,35 @@ class EpisodeManager:
         print(f"[EpisodeManager] game service OK: {h}")
 
     # ------------------------------------------------------------------
+    def _n_unlocked_tiers(self) -> int:
+        """Số tier độ khó đang được phép lấy mẫu (theo tiến trình curriculum).
+
+        frac = episode đã bắt đầu / curriculum_episodes (kẹp [0,1]).
+          frac = 0        -> 1 tier (chỉ map dễ nhất)
+          frac >= 1       -> mở hết tier
+        Tăng tuyến tính, mỗi bước mở thêm 1 tier khó hơn.
+        """
+        n = len(self._tiers)
+        if n <= 1:
+            return n
+        frac = min(1.0, self._episode_count / self.curriculum_episodes)
+        return max(1, min(n, 1 + int(frac * (n - 1) + 1e-9)))
+
     def _pick_level(self) -> dict:
-        return self.rng.choice(self.levels)
+        if not self.curriculum or len(self._tiers) <= 1:
+            return self.rng.choice(self.levels)
+        k = self._n_unlocked_tiers()
+        if k != self._last_unlocked:
+            self._last_unlocked = k
+            diffs = [len(self._tiers[i][0].get("objects", [])) for i in range(k)]
+            print(f"[curriculum] episode={self._episode_count}: mở {k}/"
+                  f"{len(self._tiers)} tier (độ khó <= {max(diffs)} vật).")
+        pool = [lv for tier in self._tiers[:k] for lv in tier]
+        return self.rng.choice(pool)
 
     def _spawn(self, eid: str):
         env = EnvClient(self.base_url, timeout=self.timeout)
+        self._episode_count += 1
         level = self._pick_level()
         obs = env.reset(level["level_id"], img_w=self.img_w, img_h=self.img_h)
         self._episodes[eid] = _Episode(env=env, level=level, obs=obs)
@@ -115,6 +160,7 @@ class EpisodeManager:
     def _reset_episode(self, eid: str):
         ep = self._episodes[eid]
         ep.env.close()
+        self._episode_count += 1
         level = self._pick_level()
         obs = ep.env.reset(level["level_id"], img_w=self.img_w, img_h=self.img_h)
         ep.level = level

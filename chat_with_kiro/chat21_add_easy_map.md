@@ -1,6 +1,6 @@
 # tôi muốn tạo thêm 5 map, mỗi map chỉ có một vật...
 
-Exported: 6/27/2026, 9:30:01 PM
+Exported: 7/6/2026, 11:20:15 AM
 
 ---
 
@@ -94,5 +94,64 @@ Lệnh tái tạo (chạy trên Mac vì `robot_spec` cần MuJoCo):
 ```
 
 Lưu ý nhỏ: map dễ giờ luân phiên loại theo `i % 3` (map5=cube_red, map6=cyl_green, map7=sphere_blue, map8=cube_red, map9=cyl_green) — hơi khác bộ tôi thêm tay ở ý 1, nhưng đây là phiên bản chuẩn hoá, reproducible. Nếu muốn mỗi loại xuất hiện đều hơn hoặc nhiều map dễ hơn, chỉ cần đổi `--easy-maps`.
+
+---
+
+**User:**
+
+trong quá trình huấn luyện tôi muốn huấn luyện model trên các màn chơi của các map có 1 object đơn giản trước
+
+---
+
+**Assistant:**
+
+Đây chính là ý 1 — cần cho training ưu tiên các map 1 vật trước. Tôi xem kỹ `episode_manager` và `grpo_train` để biết chỗ chèn logic curriculum.
+
+Tôi hiểu rồi. `_pick_level()` đang chọn ngẫu nhiên đều. Tôi sẽ thêm curriculum vào `EpisodeManager`: xếp level theo độ khó (số vật thể), giai đoạn đầu chỉ lấy map 1 vật, rồi mở dần các tier khó hơn theo tiến trình huấn luyện. Mặc định bật trong `grpo_train`, có cờ tắt.
+
+Trước tiên xem phần cuối `episode_manager.py` để biết `close()` và cấu trúc còn lại:
+
+Giờ triển khai curriculum. Sửa `__init__`:
+
+Now I have the exact text. Let me make the edits:
+
+Giờ cập nhật `_pick_level` và tăng bộ đếm episode ở `_spawn`/`_reset_episode`:
+
+Giờ nối dây vào `grpo_train.py`: thêm cờ CLI và truyền vào `EpisodeManager`.
+
+Giờ kiểm thử logic curriculum mà không cần game service (bỏ qua `_preflight`) bằng cách dựng object thủ công:
+
+Curriculum hoạt động đúng: episode 0–50 chỉ map 1 vật, rồi mở dần map 3, 4, 5 vật, mở hết sau ~200 episode. Kiểm tra lỗi cú pháp/type trên các file đã sửa:
+
+Không có lỗi. Xong.
+
+Đã thêm curriculum "dễ trước, khó sau" cho huấn luyện.
+
+**`train/episode_manager.py`**
+- `EpisodeManager` nhận thêm 2 tham số: `curriculum` (bật/tắt) và `curriculum_episodes` (nhịp mở khoá).
+- Khi khởi tạo, level được xếp thành các **tier theo độ khó = số vật thể trong map**. Với `levels.json` hiện tại là 4 tier: 1 vật (5 level), 3 vật (6), 4 vật (3), 5 vật (6).
+- `_pick_level()` giờ chỉ lấy mẫu trong các tier đã mở khoá. Số tier mở tăng tuyến tính theo số episode đã bắt đầu: khởi đầu chỉ map 1 vật, mở hết sau `curriculum_episodes`. Có log `[curriculum] ...` mỗi khi mở thêm tier.
+- Mặc định `curriculum=False` để không phá test/hành vi cũ.
+
+**`train/grpo_train.py`**
+- Thêm cờ `--no-curriculum` (mặc định curriculum **bật**) và `--curriculum-episodes` (mặc định 200), truyền vào `EpisodeManager`.
+
+Kiểm chứng bằng mô phỏng: episode 0–50 chỉ ra map 1 vật, episode 100 thêm map 3 vật, 150 thêm 4 vật, ≥200 mở toàn bộ — đúng ý "học map 1 vật trước".
+
+Cách dùng:
+```bash
+# mặc định đã bật curriculum
+python -m train.grpo_train --model Qwen/Qwen2.5-VL-3B-Instruct --game-url http://127.0.0.1:8000
+
+# điều chỉnh nhịp mở khoá (chậm hơn = ở map dễ lâu hơn)
+python -m train.grpo_train ... --curriculum-episodes 400
+
+# tắt hẳn (ngẫu nhiên đều như trước)
+python -m train.grpo_train ... --no-curriculum
+```
+
+Vài điểm cần lưu ý:
+- Tiến trình đo bằng **số episode đã bắt đầu**, không phải số training step. Một episode kéo dài tối đa `max_steps` (20) rồi reset. Nếu muốn bám sát số optimizer-step hơn, có thể đổi bộ đếm sang đếm lần `score_and_advance`.
+- Khi mở tier khó, các tier dễ **vẫn nằm trong pool** (lấy mẫu đều trên các tier đã mở), nên mô hình không quên hẳn map dễ. Nếu muốn giảm dần tỉ trọng map dễ khi đã mở map khó, mình có thể chuyển sang lấy mẫu có trọng số theo tier — báo mình nếu bạn muốn kiểu đó.
 
 ---
